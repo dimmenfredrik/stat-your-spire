@@ -112,6 +112,7 @@
     </div>
   </div>
 </div>
+<div id="artPrev" class="hidden fixed z-[60] pointer-events-none rounded-xl border border-line bg-card p-2 shadow-2xl"><img alt="" class="block max-w-[260px] max-h-[340px] rounded-lg"></div>
 <div id="toast" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2"></div>
 
 <script>
@@ -163,10 +164,10 @@ const WIKI = "https://slaythespire.wiki.gg/wiki/Special:Search?go=Go&search=";
 const wikiUrl = n => WIKI + encodeURIComponent("Slay the Spire 2:" + n);
 const wikiName = n => String(n).replace(/\s*\((elite|weak|boss)\)\s*$/i, "").split(":")[0].trim();
 const wikiA = (n, inner) => `<a href="${wikiUrl(wikiName(n))}" target="_blank" rel="noopener" title="Open &quot;${esc(wikiName(n))}&quot; on the Slay the Spire wiki" class="underline decoration-dotted decoration-white/25 underline-offset-[3px] hover:text-[var(--accent)] hover:decoration-[var(--accent)]">${inner ?? esc(n)}</a>`;
-const wikiMulti = label => String(label).split(" / ").map(x => wikiA(x, `${artImg(wikiName(x), 18)}${esc(x)}`)).join(' <span class="text-faint">/</span> ');
+const wikiMulti = label => String(label).split(" / ").map(x => wikiA(x, `${artImg(wikiName(x), 36)}${esc(x)}`)).join(' <span class="text-faint">/</span> ');
 let ART = new Map();
 const artKey = n => String(n).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-const artImg = (n, px = 24) => { const f = ART.get(artKey(n)); return f ? `<img src="/art/${encodeURIComponent(f)}" alt="" style="width:${px}px;height:${px}px" class="inline-block rounded object-cover align-middle mr-1.5">` : ""; };
+const artImg = (n, px = 24) => { const f = ART.get(artKey(n)); return f ? `<img src="/art/${encodeURIComponent(f)}" alt="" style="height:${px}px;width:auto;max-width:${Math.round(px * 1.5)}px" data-art="/art/${encodeURIComponent(f)}" class="artthumb inline-block rounded-md object-contain align-middle mr-2 cursor-zoom-in">` : ""; };
 async function loadArt() { try { const r = await fetch("/art-list"); const l = await r.json(); ART = new Map(l.map(f => [artKey(f.replace(/\.[^.]+$/, "")), f])); } catch (e) { ART = new Map(); } }
 
 /* ================================================================= data */
@@ -243,7 +244,7 @@ function viewDash() {
 
   const cards = D.table.filter(x => x.delta !== null && x.np >= 3).sort((a, b) => b.np - a.np || b.delta - a.delta).slice(0, 8);
   const crow = cards.map(x => `<div class="grid grid-cols-[minmax(0,1.25fr)_30px_minmax(0,1.1fr)_46px] gap-3 items-center py-2 border-t border-line first:border-0">
-      <span class="truncate font-semibold text-sm">${wikiA(x.card, artImg(x.card, 20) + esc(x.card))}</span><span class="num text-right text-xs text-dim">${x.np}</span>
+      <span class="truncate font-semibold text-sm">${wikiA(x.card, artImg(x.card, 34) + esc(x.card))}</span><span class="num text-right text-xs text-dim">${x.np}</span>
       <div class="relative h-5 rounded-md bg-card2 overflow-hidden"><i class="absolute inset-y-0 left-0 bg-[var(--accent)] opacity-55" style="width:${Math.max(2, x.wr_p)}%"></i><b class="num relative block text-center text-xs leading-5">${num(x.wr_p)}%</b></div>
       <span class="num text-center text-xs font-extrabold rounded-md py-0.5 ${x.delta >= 5 ? "bg-good/15 text-good" : x.delta <= -5 ? "bg-bad/15 text-bad" : "bg-card2 text-dim"}">${sgn(x.delta)}</span></div>`).join("");
   const cardPanel = panel(head("Card performance", "PICKS · WIN % · LIFT") + (crow || `<div class="text-faint text-sm">–</div>`));
@@ -317,18 +318,18 @@ function autopsyHtml(r, file, tpOnly = false) {
     const hp = [f.damage ? `<span class="${f.big ? "text-bad font-bold" : "text-warn"}">−${f.damage}</span>` : "", f.healed ? `<span class="text-good">+${f.healed}</span>` : ""].filter(Boolean).join(" ") || `<span class="text-faint">0</span>`;
     const chips = [];
     if (f.card_choices.length && f.map_type !== "shop") {
-      f.card_choices.forEach(([n, p]) => chips.push(`<span class="rounded px-1.5 py-0.5 text-[11.5px] ${p ? "bg-good/15 text-good font-semibold" : "bg-card2 text-faint line-through"}">${p ? "✔ " : ""}${wikiA(n)}</span>`));
+      f.card_choices.forEach(([n, p]) => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] ${p ? "bg-good/15 text-good font-semibold" : "bg-card2 text-faint line-through"}">${p ? "✔ " : ""}${wikiA(n, artImg(n, 30) + esc(n))}</span>`));
       if (!f.card_choices.some(c => c[1])) chips.push(`<span class="text-[11px] font-semibold text-warn">skipped</span>`);
     }
     const gained = [...f.cards_other, ...f.bought_cards];
-    gained.forEach(n => chips.push(`<span class="rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">+ ${wikiA(n)}</span>`));
-    f.relics.forEach(n => chips.push(`<span class="rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">◆ ${wikiA(n)}</span>`));
-    f.potions_picked.forEach(n => chips.push(`<span class="rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">⚗ ${esc(n)}</span>`));
-    f.potions_used.forEach(n => chips.push(`<span class="rounded px-1.5 py-0.5 text-[11.5px] bg-good/15 text-good">used ${esc(n)}</span>`));
-    f.potions_discarded.forEach(n => chips.push(`<span class="rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">tossed ${esc(n)}</span>`));
-    f.events.forEach(n => chips.push(`<span class="rounded px-1.5 py-0.5 text-[11.5px] bg-card2 text-dim">${esc(n)}</span>`));
-    f.rest.forEach(n => chips.push(`<span class="rounded px-1.5 py-0.5 text-[11.5px] ${f.smith_low ? "bg-warn/15 text-warn" : "bg-good/15 text-good"}">${esc(n)}</span>`));
-    f.removed.forEach(n => chips.push(`<span class="rounded px-1.5 py-0.5 text-[11.5px] bg-good/15 text-good">removed ${esc(n)}</span>`));
+    gained.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">+ ${wikiA(n, artImg(n, 30) + esc(n))}</span>`));
+    f.relics.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">◆ ${wikiA(n, artImg(n, 30) + esc(n))}</span>`));
+    f.potions_picked.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">⚗ ${esc(n)}</span>`));
+    f.potions_used.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-good/15 text-good">used ${esc(n)}</span>`));
+    f.potions_discarded.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">tossed ${esc(n)}</span>`));
+    f.events.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-card2 text-dim">${esc(n)}</span>`));
+    f.rest.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] ${f.smith_low ? "bg-warn/15 text-warn" : "bg-good/15 text-good"}">${esc(n)}</span>`));
+    f.removed.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-good/15 text-good">removed ${esc(n)}</span>`));
     const tp = f.tp.map(b => pill(b.k, b.label)).join(" ");
     rows.push(`<tr class="border-t border-line ${f.tp.length ? "bg-warn/[.05]" : ""}">
       <td class="num px-3 py-2 text-xs text-faint align-top">${f.floor}</td>
@@ -410,7 +411,7 @@ function viewCards() {
   const rows = D.table.filter(x => !S.search || x.card.toLowerCase().includes(S.search.toLowerCase()));
   const key = {card: x => x.card.toLowerCase(), offered: x => x.offered, pick_pct: x => x.pick_pct, wr_p: x => x.wr_p ?? -1, wr_s: x => x.wr_s ?? -1, lift: x => x.delta ?? -999, verdict: x => ({TAKE: 0, OK: 1, SKIP: 2, LOW: 3})[x.verdict]}[S.sort.key];
   rows.sort((a, b) => { const A = key(a), B = key(b); return (A < B ? -1 : A > B ? 1 : 0) * (S.sort.desc ? -1 : 1); });
-  const body = rows.slice(0, 200).map(x => `<tr class="border-t border-line hover:bg-card2/60 transition"><td class="px-4 py-2.5 font-semibold">${wikiA(x.card, artImg(x.card, 22) + esc(x.card))}</td><td class="num px-4 py-2.5 text-right text-dim">${x.offered}</td>
+  const body = rows.slice(0, 200).map(x => `<tr class="border-t border-line hover:bg-card2/60 transition"><td class="px-4 py-2.5 font-semibold">${wikiA(x.card, artImg(x.card, 40) + esc(x.card))}</td><td class="num px-4 py-2.5 text-right text-dim">${x.offered}</td>
     <td class="num px-4 py-2.5 text-right text-dim">${num(x.pick_pct)}%</td><td class="num px-4 py-2.5 text-right">${x.wr_p === null ? "–" : num(x.wr_p) + "%"}</td><td class="num px-4 py-2.5 text-right text-dim">${x.wr_s === null ? "–" : num(x.wr_s) + "%"}</td>
     <td class="num px-4 py-2.5 text-right font-bold ${x.delta >= 5 ? "text-good" : x.delta <= -5 ? "text-bad" : "text-dim"}">${x.delta === null ? "–" : sgn(x.delta)}</td><td class="px-4 py-2.5 text-right"><span class="rounded-full px-2.5 py-0.5 text-[10.5px] font-extrabold ${VERDICT[x.verdict]}">${x.verdict}</span></td></tr>`).join("");
   return `<div class="flex items-center justify-between mb-3 gap-3"><h3 class="font-bold">Card impact</h3>
@@ -436,6 +437,10 @@ document.addEventListener("click", e => {
   else if (t.dataset.goto) { S.tab = "dash"; S.open.add(t.dataset.goto); const i = D.feed.findIndex(r => r.file === t.dataset.goto); if (i >= S.feedN) S.feedN = i + 1; renderTabs(); renderView(); setTimeout(() => { const el = document.getElementById("exp-" + cssId(t.dataset.goto)); el && el.scrollIntoView({behavior: "smooth", block: "center"}); }, 120); }
   else if (t.dataset.sort) { const k = t.dataset.sort; S.sort = {key: k, desc: S.sort.key === k ? !S.sort.desc : k !== "card"}; renderView(); }
 });
+const artPrev = $("#artPrev");
+document.addEventListener("mouseover", e => { const t = e.target.closest && e.target.closest(".artthumb"); if (!t) return; artPrev.querySelector("img").src = t.dataset.art; artPrev.classList.remove("hidden"); });
+document.addEventListener("mousemove", e => { if (artPrev.classList.contains("hidden")) return; const w = artPrev.offsetWidth, h = artPrev.offsetHeight; let x = e.clientX + 18, y = e.clientY + 14; if (x + w > innerWidth - 8) x = e.clientX - w - 18; if (y + h > innerHeight - 8) y = innerHeight - h - 8; artPrev.style.left = x + "px"; artPrev.style.top = Math.max(8, y) + "px"; });
+document.addEventListener("mouseout", e => { const t = e.target.closest && e.target.closest(".artthumb"); if (t) artPrev.classList.add("hidden"); });
 document.addEventListener("input", e => { if (e.target.id === "cardSearch") { S.search = e.target.value; const p = e.target.selectionStart; renderView(); const n = $("#cardSearch"); n.focus(); n.setSelectionRange(p, p); } });
 $("#asc").addEventListener("change", e => { S.asc = e.target.value; refresh(); });
 $("#optQuits").addEventListener("change", e => { S.quits = e.target.checked; refresh(); });
