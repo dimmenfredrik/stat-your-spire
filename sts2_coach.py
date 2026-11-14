@@ -34,6 +34,8 @@ POLL_MS = 3000                 # how often to check the folder for new .run file
 GOLD_LEAK_THRESHOLD = 150      # "died with >150 unspent gold"
 MIN_OFFERED = 8                # Card Pick Impact: only cards offered at least this often
 BLOAT_DECK = 28                # a final deck this size or larger counts as "bloated"
+LEAN_DECK = 24                 # a final deck this size or smaller counts as "lean"
+MIN_PARTNER_RUNS = 4           # synergy partners need this many shared decks
 TEMPO_FIGHTS = 4               # hallway fights measured after a pick
 SLOW_TURNS_BY_ACT = {1: 3.5, 2: 4.0, 3: 4.5}   # avg turns per normal fight
 SLOW_FIGHT_TURNS = 5           # a single hallway fight taking this many turns is "slow"
@@ -239,6 +241,22 @@ def parse_run(path, steam_id=None):
                 "bought_cards": [pretty(c) for c in s.get("bought_colorless") or []],
             })
 
+    # Deck size at the end of Act 2 (only if the run reached Act 3): final-deck cards added by then,
+    # plus cards added by then that were removed later.
+    deck_act2 = None
+    act2_floors = [f["floor"] for f in floors if f["act"] == 2]
+    if act2_floors and any(f["act"] >= 3 for f in floors):
+        edge = max(act2_floors)
+        removed_raw = []
+        fno = 0
+        for act_floors in run.get("map_point_history") or []:
+            for fl in act_floors or []:
+                fno += 1
+                for c in my_stats(fl, pid).get("cards_removed") or []:
+                    removed_raw.append((c.get("floor_added_to_deck") or 0, fno))
+        deck_act2 = (sum(1 for c in player.get("deck") or [] if (c.get("floor_added_to_deck") or 0) <= edge)
+                     + sum(1 for added, rf in removed_raw if added <= edge < rf))
+
     final_potions = [pretty(p.get("id")) for p in player.get("potions") or []]
     # On death the game clears the belt, so fall back to the reconstruction.
     unused_potions = final_potions or [pretty(p) for p in held_potions]
@@ -282,6 +300,7 @@ def parse_run(path, steam_id=None):
         "deck_added": [pretty(c.get("id")) for c in player.get("deck") or []
                        if (c.get("floor_added_to_deck") or 0) > 1],
         "removals": sum(len(f["removed"]) for f in floors),
+        "deck_act2": deck_act2,
         "relic_count": len(player.get("relics") or []),
     }
 
@@ -712,6 +731,56 @@ def card_pick_impact(runs, include_abandoned, min_offered=MIN_OFFERED, act_ids=N
     lift_base = (sum(d * n for d, n in deltas) / sum(n for _, n in deltas)) if deltas and sum(n for _, n in deltas) else 0.0
     meta = dict(base=base, bloat_base=bloat_base, tempo_base=tempo_base, lift_base=lift_base)
     return rows, meta
+
+
+def card_detail(runs, include_abandoned, card):
+    """Synergy breakdown for one card: deck-size split, co-picked partners, act-drafted split."""
+    decided = [r for r in runs if r["win"] or is_loss(r, include_abandoned)]
+    with_card = [r for r in decided if card in r["deck_added"]]
+
+    def wr(rs):
+        return (pct(sum(r["win"] for r in rs), len(rs)), len(rs)) if rs else (None, 0)
+
+    out = {"overall": wr(with_card)}
+    # 1. deck size - only runs that reached Act 3, so short early deaths (small decks) don't fake a
+    #    "lean decks lose" result
+    late = [r for r in with_card if r.get("deck_act2") is not None]
+    out["late_n"] = len(late)
+    out["lean"] = wr([r for r in late if r["deck_act2"] <= LEAN_DECK])
+    out["mid"] = wr([r for r in late if LEAN_DECK < r["deck_act2"] < BLOAT_DECK])
+    out["bloated"] = wr([r for r in late if r["deck_act2"] >= BLOAT_DECK])
+    out["deck_avg_win"] = avg([r["deck_act2"] for r in late if r["win"]]) if any(r["win"] for r in late) else None
+    out["deck_avg_loss"] = avg([r["deck_act2"] for r in late if not r["win"]]) if any(not r["win"] for r in late) else None
+
+    # 2. partners
+    base, n_base = out["overall"]
+    partners = []
+    if with_card:
+        cand = Counter(p for r in with_card for p in set(r["deck_added"]) if p != card)
+        for p, n in cand.items():
+            if n < MIN_PARTNER_RUNS:
+                continue
+            both = [r for r in with_card if p in r["deck_added"]]
+            without = [r for r in with_card if p not in r["deck_added"]]
+            w_both, _ = wr(both)
+            w_wo, n_wo = wr(without)
+            partners.append(dict(card=p, n=n, wr=w_both, delta=w_both - base, wr_without=w_wo, n_without=n_wo))
+    partners.sort(key=lambda x: (-x["delta"], -x["n"]))
+    out["best"] = [x for x in partners if x["delta"] > 0][:3]
+    out["worst"] = sorted([x for x in partners if x["delta"] < 0], key=lambda x: (x["delta"], -x["n"]))[:3]
+    out["partner_pool"] = len(partners)
+
+    # 3. act drafted (first time it was picked from a card reward)
+    a1, a23 = [], []
+    for r in decided:
+        if r.get("deck_act2") is None:      # same checkpoint: only runs that reached Act 3
+            continue
+        first = next((f for f in r["floors"] if f["map_type"] != "shop"
+                      and any(p and n == card for n, p in f["card_choices"])), None)
+        if first:
+            (a1 if first["act"] == 1 else a23).append(r)
+    out["act1"], out["act23"] = wr(a1), wr(a23)
+    return out
 
 
 def reward_stats(runs, include_abandoned, act_ids=None):
@@ -1443,25 +1512,34 @@ class CoachApp(tk.Tk):
         body.pack(fill="both", expand=True)
         self.guide_sf = ScrollFrame(body)
         self.overview_sf = ScrollFrame(body)
-        self.table_frame = tk.Frame(body, bg=CARD)
-        cols = [("card", "CARD", 170, "w"), ("verdict", "VERDICT", 90, "w"), ("offered", "OFFERED", 70, "center"),
-                ("pick", "PICK %", 64, "center"), ("wrp", "WIN% PICKED", 110, "center"),
-                ("wrs", "WIN% SKIPPED", 116, "center"), ("lift", "LIFT", 60, "center"),
-                ("deck", "AVG DECK", 76, "center"), ("tempo", "TEMPO", 64, "center"),
-                ("removed", "REMOVED", 84, "center"), ("flags", "NOTES", 200, "w")]
-        self.card_tree = ttk.Treeview(self.table_frame, columns=[c[0] for c in cols], show="headings")
+        self.table_frame = tk.Frame(body, bg=BG)
+        tpane = tk.PanedWindow(self.table_frame, orient="horizontal", bg=BG, sashwidth=10,
+                               borderwidth=0, sashrelief="flat")
+        tpane.pack(fill="both", expand=True)
+        tleft = tk.Frame(tpane, bg=CARD)
+        self.detail_sf = ScrollFrame(tpane, bg=CARD)
+        tpane.add(tleft, minsize=520, stretch="always")
+        tpane.add(self.detail_sf, minsize=340, width=390, stretch="never")
+        self.detail_card = None
+        cols = [("card", "CARD", 128, "w"), ("verdict", "VERDICT", 72, "w"), ("offered", "OFFERS", 56, "center"),
+                ("pick", "PICK%", 50, "center"), ("wrp", "WIN TAKEN", 80, "center"),
+                ("wrs", "WIN SKIP", 80, "center"), ("lift", "LIFT", 44, "center"),
+                ("deck", "DECK", 46, "center"), ("tempo", "TEMPO", 54, "center"),
+                ("removed", "REM", 40, "center"), ("flags", "NOTES", 90, "w")]
+        self.card_tree = ttk.Treeview(tleft, columns=[c[0] for c in cols], show="headings", selectmode="browse")
         for key, title, wdt, anc in cols:
             self.card_tree.heading(key, text=title, anchor=anc, command=lambda k=key: self._sort_table(k))
-            self.card_tree.column(key, width=wdt, minwidth=40, anchor=anc, stretch=key in ("card", "flags"))
+            self.card_tree.column(key, width=wdt, minwidth=36, anchor=anc, stretch=key in ("card", "flags"))
         self.card_tree.tag_configure("TAKE", foreground=GOOD)
         self.card_tree.tag_configure("SKIP", foreground=BAD)
         self.card_tree.tag_configure("OK", foreground=FG)
         self.card_tree.tag_configure("LOW", foreground=FAINT)
-        tsb = ttk.Scrollbar(self.table_frame, orient="vertical", command=self.card_tree.yview,
+        tsb = ttk.Scrollbar(tleft, orient="vertical", command=self.card_tree.yview,
                             style="Modern.Vertical.TScrollbar")
         self.card_tree.configure(yscrollcommand=tsb.set)
         self.card_tree.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
         tsb.pack(side="right", fill="y")
+        self.card_tree.bind("<<TreeviewSelect>>", self._on_card_select)
         self._set_stats_tab(self.stats_tab, render=False)
 
     def _scope_key(self):
@@ -1814,7 +1892,7 @@ class CoachApp(tk.Tk):
         self.card_tree.delete(*self.card_tree.get_children())
         label = {"TAKE": "✔ Take", "SKIP": "✖ Skip", "OK": "Either", "LOW": "few picks"}
         for x in rows:
-            self.card_tree.insert("", "end", tags=(x["verdict"],), values=(
+            self.card_tree.insert("", "end", iid=x["card"], tags=(x["verdict"],), values=(
                 x["card"], label[x["verdict"]], x["offered"], f"{x['pick_pct']:.0f}%",
                 "-" if x["wr_p"] is None else f"{x['wr_p']:.0f}% ({x['np']})",
                 "-" if x["wr_s"] is None else f"{x['wr_s']:.0f}% ({x['ns']})",
@@ -1822,6 +1900,126 @@ class CoachApp(tk.Tk):
                 "-" if x["deck"] is None else f"{x['deck']:.1f}",
                 "-" if x["tempo"] is None else f"{x['tempo']:+.2f}",
                 x["removed"], ", ".join(t for t, _ in x["notes"])))
+        if self.detail_card and self.card_tree.exists(self.detail_card):
+            self.card_tree.selection_set(self.detail_card)
+            self.card_tree.see(self.detail_card)
+        self._render_card_detail()
+
+    def _on_card_select(self, _e=None):
+        sel = self.card_tree.selection()
+        if sel and sel[0] != self.detail_card:
+            self.detail_card = sel[0]
+            self._render_card_detail()
+
+    def _wr_row(self, parent, label, value, n, color, note=""):
+        row = tk.Frame(parent, bg=CARD)
+        row.pack(fill="x", pady=3)
+        tk.Label(row, text=label, bg=CARD, fg=DIM, font=(UI_FONT, 9), width=15, anchor="w").pack(side="left")
+        track = tk.Frame(row, bg=BORDER, width=90, height=8)
+        track.pack(side="left", padx=(2, 10))
+        track.pack_propagate(False)
+        if value is not None:
+            tk.Frame(track, bg=color, width=max(3, int(90 * value / 100)), height=8).place(x=0, y=0)
+        txt = "no runs" if value is None else f"{value:.0f}%  ({n})"
+        tk.Label(row, text=txt, bg=CARD, fg=FG if value is not None else FAINT, font=(UI_FONT, 9)).pack(side="left")
+        if note:
+            tk.Label(row, text=note, bg=CARD, fg=FAINT, font=(UI_FONT, 8)).pack(side="left", padx=6)
+
+    def _render_card_detail(self):
+        sf = self.detail_sf
+        sf.clear()
+        b = tk.Frame(sf.inner, bg=CARD, padx=18, pady=16)
+        b.pack(fill="both", expand=True)
+        if self.character == ALL:
+            tk.Label(b, text="Card detail", bg=CARD, fg=FG, font=(UI_FONT_SEMI, 13)).pack(anchor="w")
+            wrap_label(b, "Pick a single character in the sidebar, then click a card to see its synergy "
+                          "breakdown (cards behave very differently across characters).", 10, fg=DIM).pack(fill="x", pady=(6, 0))
+            return
+        card = self.detail_card
+        if not card:
+            tk.Label(b, text="Card detail", bg=CARD, fg=FG, font=(UI_FONT_SEMI, 13)).pack(anchor="w")
+            wrap_label(b, "Click any card in the table to see whether it wins on its own, needs partners, "
+                          "or only works in a lean deck.", 10, fg=DIM).pack(fill="x", pady=(6, 0))
+            return
+        inc = self.include_abandoned.get()
+        d = card_detail(self.runs, inc, card)
+        ov, n_ov = d["overall"]
+        tk.Label(b, text=card, bg=CARD, fg=FG, font=(UI_FONT_SEMI, 15)).pack(anchor="w")
+        if ov is None:
+            wrap_label(b, "This card never made it into a finished deck with the current filters "
+                          "(it may have been removed, or only appears in quit runs).", 10, fg=DIM).pack(fill="x", pady=(6, 0))
+            return
+        wrap_label(b, f"In {n_ov} finished deck{'s' if n_ov != 1 else ''} · win rate {ov:.0f}%  "
+                      f"(all biomes, current filters)", 10, fg=DIM).pack(fill="x", pady=(2, 10))
+
+        def section(title, sub):
+            tk.Frame(b, bg=BORDER, height=1).pack(fill="x", pady=(10, 8))
+            tk.Label(b, text=title, bg=CARD, fg=ACCENT, font=(UI_FONT_SEMI, 9)).pack(anchor="w")
+            wrap_label(b, sub, 8, fg=FAINT).pack(fill="x", pady=(0, 4))
+
+        # 1. Deck size
+        section("WIN RATE BY DECK SIZE", f"Deck size at the end of Act 2, in the {d['late_n']} runs with this card "
+                                         f"that reached Act 3 - same checkpoint for every run, so early deaths "
+                                         f"don't skew it.")
+        lean, n_l = d["lean"]
+        mid, n_m = d["mid"]
+        blo, n_b = d["bloated"]
+        self._wr_row(b, f"Lean (≤{LEAN_DECK})", lean, n_l, GOOD)
+        self._wr_row(b, f"Middle ({LEAN_DECK + 1}-{BLOAT_DECK - 1})", mid, n_m, INFO)
+        self._wr_row(b, f"Bloated ({BLOAT_DECK}+)", blo, n_b, BAD)
+        if lean is not None and blo is not None and n_l >= 2 and n_b >= 2:
+            diff = lean - blo
+            if diff >= 15:
+                msg, col = (f"Works much better when you stay disciplined: +{diff:.0f} pts in lean decks. "
+                            f"Skip more cards after taking it."), GOOD
+            elif diff <= -15:
+                msg, col = (f"Wins more in big decks ({-diff:.0f} pts) - likely needs support cards or "
+                            f"a long game to come online."), INFO
+            else:
+                msg, col = "Deck size doesn't change much for this card.", DIM
+            wrap_label(b, msg, 9, fg=col).pack(fill="x", pady=(4, 0))
+        elif d["deck_avg_win"] is not None and d["deck_avg_loss"] is not None:
+            wrap_label(b, f"Avg deck at end of Act 2: {d['deck_avg_win']:.1f} in wins vs {d['deck_avg_loss']:.1f} in losses.",
+                       9, fg=DIM).pack(fill="x", pady=(4, 0))
+
+        # 2. Partners
+        section("BEST & WORST CO-PICKED PARTNERS",
+                f"Cards also in the deck in {MIN_PARTNER_RUNS}+ runs, vs this card's {ov:.0f}% baseline.")
+        if not d["partner_pool"]:
+            wrap_label(b, f"No partner appears in {MIN_PARTNER_RUNS}+ decks with this card yet.", 9,
+                       fg=FAINT).pack(fill="x")
+        for title, items, col in (("Synergy enablers", d["best"], GOOD), ("Anti-synergy / clutter", d["worst"], BAD)):
+            tk.Label(b, text=title, bg=CARD, fg=col, font=(UI_FONT_SEMI, 9)).pack(anchor="w", pady=(6, 2))
+            if not items:
+                tk.Label(b, text="none found", bg=CARD, fg=FAINT, font=(UI_FONT, 9)).pack(anchor="w")
+            for x in items:
+                row = tk.Frame(b, bg=CARD_HI, padx=10, pady=5)
+                row.pack(fill="x", pady=2)
+                top = tk.Frame(row, bg=CARD_HI)
+                top.pack(fill="x")
+                tk.Label(top, text=x["card"], bg=CARD_HI, fg=FG, font=(UI_FONT_SEMI, 10)).pack(side="left")
+                tk.Label(top, text=f"{x['delta']:+.0f}", bg=CARD_HI, fg=col, font=(UI_FONT_SEMI, 11)).pack(side="right")
+                wo = "" if x["wr_without"] is None else f"  ·  {x['wr_without']:.0f}% without it"
+                tk.Label(row, text=f"{x['wr']:.0f}% win together ({x['n']} runs){wo}", bg=CARD_HI, fg=DIM,
+                         font=(UI_FONT, 8)).pack(anchor="w")
+
+        # 3. Act drafted
+        section("ACT DRAFTED", "Win rate by the act you first took it from a card reward - runs that reached "
+                               "Act 3 only, so Act 1 picks aren't punished for early deaths.")
+        a1, n1 = d["act1"]
+        a23, n23 = d["act23"]
+        self._wr_row(b, "Drafted in Act 1", a1, n1, INFO)
+        self._wr_row(b, "Drafted in Act 2/3", a23, n23, ACCENT)
+        if a1 is not None and a23 is not None and n1 >= 2 and n23 >= 2 and abs(a1 - a23) >= 15:
+            if a23 > a1:
+                msg = (f"Better as a later pick (+{a23 - a1:.0f} pts in Act 2/3) - in Act 1 prefer frontloaded "
+                       f"damage and take this once the deck can survive.")
+            else:
+                msg = f"Better as an early pick (+{a1 - a23:.0f} pts in Act 1) - it helps most while the deck is weak."
+            wrap_label(b, msg, 9, fg=GOOD).pack(fill="x", pady=(4, 0))
+
+        wrap_label(b, "Small samples: runs that last longer collect more cards, so treat these as hints.",
+                   8, fg=FAINT).pack(fill="x", pady=(14, 0))
 
     def _sort_table(self, key):
         cur, desc = self.table_sort
