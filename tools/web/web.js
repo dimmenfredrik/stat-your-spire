@@ -80,6 +80,16 @@ def call(name, args_json):
   const idb = (mode, fn) => new Promise((res, rej) => { const o = indexedDB.open("sts2coach", 1); o.onupgradeneeded = () => o.result.createObjectStore("kv"); o.onerror = () => rej(o.error); o.onsuccess = () => { const tx = o.result.transaction("kv", mode), r = fn(tx.objectStore("kv")); tx.oncomplete = () => res(r && r.result); tx.onerror = () => rej(tx.error); }; });
   const saveHandle = h => idb("readwrite", s => s.put(h, "dir")).catch(() => {});
   const lastHandle = () => idb("readonly", s => s.get("dir")).catch(() => null);
+  // the runs themselves are kept in this browser too, so a refresh does not ask for them again
+  const savedRuns = () => idb("readonly", s => s.get("runs")).catch(() => null);
+  const forgetRuns = () => idb("readwrite", s => s.delete("runs")).catch(() => {});
+  async function keepRuns(files) {
+    try {
+      const out = [];
+      for (const f of files.filter(f => f.name.endsWith(".run"))) out.push({name: f.name, lm: f.lastModified, buf: await f.arrayBuffer()});
+      if (out.length) await idb("readwrite", s => s.put(out, "runs"));
+    } catch (e) {}
+  }
 
   // ---------- start screen
   function screen() {
@@ -110,11 +120,12 @@ def call(name, args_json):
   }
   const btn = (id, text, primary) => `<button id="${id}" class="w-full rounded-xl px-5 py-3 text-[15px] font-bold transition ${primary ? "bg-[var(--accent)] text-[#12151b] hover:opacity-90" : "border border-line bg-card2 hover:border-[var(--accent)]"}">${text}</button>`;
 
-  async function finish(files, el) {
+  async function finish(files, el, noSave) {
     $("wsErr").textContent = ""; $("wsMsg").textContent = "Reading your runs...";
     await booted;
     const n = await loadFiles(files, true);
     if (!n) { $("wsMsg").textContent = ""; $("wsErr").textContent = "No .run files in that folder. Pick the folder called history that holds them."; return false; }
+    if (!noSave) keepRuns(files);
     el.remove(); resolveReady(); return true;
   }
   async function pick(el) {
@@ -135,6 +146,13 @@ def call(name, args_json):
     const el = screen();
     $("wsMsg").textContent = "Loading the analysis engine (about 10 MB, first time only)...";
     booted = bootPython().then(() => { $("wsMsg").textContent = ""; }).catch(e => { $("wsErr").textContent = "Could not load the analysis engine: " + e.message + ". Check your connection and reload."; throw e; });
+    const saved = await savedRuns();
+    if (saved && saved.length) {
+      $("wsMsg").textContent = "Loading your saved runs (" + saved.length + ")...";
+      const ok = await finish(saved.map(r => new File([r.buf], r.name, {lastModified: r.lm})), el, true).catch(() => false);
+      if (ok) return;
+      $("wsMsg").textContent = "";
+    }
     const last = window.showDirectoryPicker ? await lastHandle() : null;
     $("wsRes").innerHTML = (last ? btn("wsLast", "Use the same folder as last time (" + esc(last.name) + ")", true) + `<div class="h-2"></div>` : "") + btn("wsFiles", "Choose run files", !last) + (window.showDirectoryPicker ? `<div class="mt-2 text-center text-xs text-faint"><button id="wsPick" class="underline hover:text-ink">or choose a whole folder (not inside AppData)</button></div>` : "");
     $("wsFiles").onclick = () => pickFiles(el);
@@ -235,6 +253,7 @@ def call(name, args_json):
     return JSON.parse(py.runPython("call(_n, _a)"));
   };
 
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}   // ask the browser not to clear our saved runs/pictures
   window.__webLoad = fs => finish(fs, $("webStart"));
   window.WEB_ART_READY = artGet().then(rec => { if (rec) applyArt(rec); }).catch(() => {});
   document.addEventListener("DOMContentLoaded", () => {
@@ -242,7 +261,8 @@ def call(name, args_json):
     const fb = $("folderBtn");
     if (fb) fb.addEventListener("click", async e => {
       e.stopImmediatePropagation();
-      const el = screen(); el.querySelector("#wsRes").innerHTML = btn("wsFiles2", "Choose run files", true);
+      const el = screen(); el.querySelector("#wsRes").innerHTML = btn("wsFiles2", "Choose run files", true) + `<div class="mt-2 text-center text-xs text-faint"><button id="wsForget" class="underline hover:text-ink">Forget the runs saved in this browser</button></div>`;
+      el.querySelector("#wsForget").onclick = async () => { await forgetRuns(); el.querySelector("#wsForget").textContent = "Forgotten. They will not load next time."; };
       el.querySelector("#wsFiles2").onclick = async () => { if (await pickFiles(el)) { await window.WEB_API("reload", []); if (typeof refresh === "function") refresh(); } };
     }, true);
   });
