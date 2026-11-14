@@ -76,7 +76,7 @@ except ImportError:
 
 class Pck:
     def __init__(self, path):
-        self.f = open(path, "rb")
+        self.f = path if hasattr(path, "read") else open(path, "rb")
         h = self.f.read(40)
         magic, ver, maj, mi, pa, flags, base, dirofs = struct.unpack("<4sIIIIIQQ", h)
         assert magic == b"GDPC" and ver == 3, "unexpected game data format"
@@ -185,8 +185,8 @@ def ensure(mod, pkg):
             return False
 
 
-def load_card_data(pck_path):
-    dll = os.path.join(os.path.dirname(pck_path), "data_sts2_windows_x86_64", "sts2.dll")
+def load_card_data(pck_path, dll=None):
+    dll = dll or os.path.join(os.path.dirname(pck_path), "data_sts2_windows_x86_64", "sts2.dll")
     if not os.path.isfile(dll):
         return {}
     try:
@@ -209,18 +209,8 @@ def load_card_data(pck_path):
         return {}
 
 
-def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    quiet = "--if-missing" in sys.argv
-    if quiet and os.path.isfile(os.path.join(ART, "descriptions.json")):
-        return 0                                   # already built on this PC
-    path = args[0] if args else find_pck()
-    if not path:
-        print("Could not find the Slay the Spire 2 game files, so pictures are skipped (the coach still works).")
-        return 0 if quiet else 1
-    print("Building pictures from your own game files - about 30 seconds, one time only...")
-    pck = Pck(path)
-    os.makedirs(ART, exist_ok=True)
+def collect_jobs(pck):
+    """Which pictures to build: [(kind, .import path, name)]."""
     jobs, beta_jobs = [], []
     for p in pck.ents:
         if not p.endswith(".png.import"):
@@ -240,20 +230,11 @@ def main():
             jobs.append(("event", p, stem))
     have = {j[2] for j in jobs}
     jobs += [j for j in beta_jobs if j[2] not in have]   # early-access placeholder art only where nothing better exists
-    done = fail = 0
-    for kind, p, stem in jobs:
-        try:
-            img = texture_for(pck, p)
-            if img is None:
-                fail += 1
-                continue
-            save(img, stem)
-            done += 1
-        except Exception as e:
-            fail += 1
-            print("failed", p, e)
-    print(f"pictures saved: {done}, failed: {fail}")
-    cards = load_card_data(path)
+    return jobs
+
+
+def build_info(pck, cards):
+    """descriptions.json content from the game text + the card numbers read from sts2.dll."""
     info = {}
     for name, fields in (("cards", ("description",)), ("relics", ("description",)), ("potions", ("description",)), ("events", ())):
         try:
@@ -285,6 +266,37 @@ def main():
                         if up != entry["text"]:
                             entry["up"] = up
                 info.setdefault(key, entry)
+    return info
+
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    quiet = "--if-missing" in sys.argv
+    if quiet and os.path.isfile(os.path.join(ART, "descriptions.json")):
+        return 0                                   # already built on this PC
+    path = args[0] if args else find_pck()
+    if not path:
+        print("Could not find the Slay the Spire 2 game files, so pictures are skipped (the coach still works).")
+        return 0 if quiet else 1
+    print("Building pictures from your own game files - about 30 seconds, one time only...")
+    pck = Pck(path)
+    os.makedirs(ART, exist_ok=True)
+    jobs = collect_jobs(pck)
+    done = fail = 0
+    for kind, p, stem in jobs:
+        try:
+            img = texture_for(pck, p)
+            if img is None:
+                fail += 1
+                continue
+            save(img, stem)
+            done += 1
+        except Exception as e:
+            fail += 1
+            print("failed", p, e)
+    print(f"pictures saved: {done}, failed: {fail}")
+    cards = load_card_data(path)
+    info = build_info(pck, cards)
     with open(os.path.join(ART, "descriptions.json"), "w", encoding="utf-8") as fh:
         json.dump(info, fh, ensure_ascii=False, indent=1)
     print(f"descriptions written: {len(info)}")

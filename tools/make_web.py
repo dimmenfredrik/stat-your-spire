@@ -18,6 +18,10 @@ os.makedirs(os.path.join(out, "static")); os.makedirs(os.path.join(out, "py"))
 for name in ("style.css", "deck.js", "focus.js"):
     shutil.copy(os.path.join(src, "static", name), os.path.join(out, "static", name))
 shutil.copy(os.path.join(here, "web", "web.js"), os.path.join(out, "static", "web.js"))
+shutil.copy(os.path.join(here, "web", "artworker.js"), os.path.join(out, "static", "artworker.js"))
+for name in ("extract_art_from_game.py", "card_values.py"):
+    shutil.copy(os.path.join(src, name), os.path.join(out, "py", name))
+shutil.copy(os.path.join(here, "web", "web_art.py"), os.path.join(out, "py", "web_art.py"))
 
 app = open(os.path.join(src, "static", "app.js"), encoding="utf-8").read()
 old = 'async function api(name, ...args) {\n'
@@ -28,12 +32,15 @@ assert old in app
 app = app.replace(old, '  if (window.WEB_READY) await window.WEB_READY;\n' + old, 1)
 old = 'async function loadArt() {'
 assert old in app
-app = app.replace(old, old + ' if (window.WEB) { INFO = {}; ART = new Map(); return; }', 1)
+app = app.replace(old, old + ' if (window.WEB) { await window.WEB_ART_READY; const a = window.webArt(); INFO = a.info; ART = new Map(a.list.map(f => [artKey(f.replace(/\\.[^.]+$/, "")), f])); return; }', 1)
+# picture files come from the player's own browser storage (blob URLs), not from /art/
+n_before = app.count("/art/")
+app = re.sub(r"/art/\$\{encodeURIComponent\(([^)]*)\)\}", r"${artUrl(\1)}", app)
+app = app.replace('"/art/" + encodeURIComponent(file)', "artUrl(file)")
 open(os.path.join(out, "static", "app.js"), "w", encoding="utf-8").write(app)
 
 deck = open(os.path.join(out, "static", "deck.js"), encoding="utf-8").read()
-deck = deck.replace("Card type and cost need the pictures library: start the coach once with the game installed.",
-                    "Card pictures, type and cost are only in the downloadable version (they are built from your own game files).")
+deck = re.sub(r"/art/\$\{encodeURIComponent\(([^)]*)\)\}", r"${artUrl(\1)}", deck)
 open(os.path.join(out, "static", "deck.js"), "w", encoding="utf-8").write(deck)
 
 html = open(os.path.join(src, "index.html"), encoding="utf-8").read()

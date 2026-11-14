@@ -142,6 +142,81 @@ def call(name, args_json):
     el.addEventListener("drop", async e => { e.preventDefault(); const fs = [...(e.dataTransfer.files || [])]; if (fs.length) await finish(fs, el); });
   }
 
+
+  // ---------- card pictures: built from the player's own game files, kept only in this browser
+  window.WEB_ART = {urls: {}, list: [], info: {}};
+  window.artUrl = f => window.WEB_ART.urls[f] || "/art/" + encodeURIComponent(f);
+  window.webArt = () => ({info: window.WEB_ART.info, list: window.WEB_ART.list});
+  const artGet = () => idb("readonly", s => s.get("art")).catch(() => null);
+  const artPut = v => idb("readwrite", s => s.put(v, "art"));
+  const artDel = () => idb("readwrite", s => s.delete("art")).catch(() => {});
+  function applyArt(rec) {
+    Object.values(window.WEB_ART.urls).forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
+    const urls = {}, list = [];
+    if (rec) for (const [n, buf] of Object.entries(rec.files)) { urls[n] = URL.createObjectURL(new Blob([buf], {type: "image/webp"})); list.push(n); }
+    window.WEB_ART = {urls, list, info: rec ? JSON.parse(rec.info) : {}};
+  }
+  async function reloadArtUi() {
+    if (typeof loadArt === "function") await loadArt();
+    if (typeof renderAll === "function") { try { renderAll(); } catch (e) {} }
+    artButton();
+  }
+  function artButton() {
+    let b = $("webArtBtn");
+    if (!b) {
+      const fb = $("folderBtn"); if (!fb || !fb.parentElement) return;
+      b = document.createElement("button"); b.id = "webArtBtn";
+      b.className = "mb-2 w-full rounded-lg border border-line bg-card2 px-3 py-2 text-sm font-semibold hover:border-[var(--accent)]";
+      b.onclick = artDialog; fb.parentElement.insertAdjacentElement("beforebegin", b);
+    }
+    b.textContent = window.WEB_ART.list.length ? "Card pictures: on" : "Add card pictures";
+  }
+  function artDialog() {
+    if ($("webArtDlg")) return;
+    const have = window.WEB_ART.list.length;
+    const el = document.createElement("div");
+    el.id = "webArtDlg"; el.className = "fixed inset-0 z-[60] grid place-items-center bg-black/60 p-6 overflow-auto";
+    const file = (id, label, note) => `<div class="mt-3 flex items-center gap-3"><button id="${id}" class="shrink-0 rounded-lg border border-line bg-card2 px-3 py-2 text-sm font-semibold hover:border-[var(--accent)]">${label}</button><span id="${id}T" class="text-xs text-faint">${note}</span></div>`;
+    el.innerHTML = `<div class="w-full max-w-xl rounded-2xl border border-line bg-card p-7">
+      <div class="text-lg font-extrabold">Card pictures</div>
+      <p class="mt-2 text-[14px] leading-relaxed text-dim">The pictures are made right here from <b class="text-ink">your own copy of the game</b>, once. They stay in this browser and are <b class="text-ink">never uploaded</b>.</p>
+      ${have ? `<p class="mt-3 text-sm text-good">Pictures are on (${have} images).</p>` : ""}
+      <div class="mt-4 rounded-xl bg-card2 p-4 text-[13px] leading-relaxed text-dim">In Steam: right-click Slay the Spire 2 → Manage → Browse local files. Then pick:
+        <div class="mt-2"><code class="text-ink">SlayTheSpire2.pck</code> (about 2 GB, it is only read, not copied)</div>
+        <div><code class="text-ink">data_sts2_windows_x86_64\\sts2.dll</code> (optional: gives the real card numbers)</div></div>
+      ${file("wdPck", "Choose SlayTheSpire2.pck", "not chosen")}
+      ${file("wdDll", "Choose sts2.dll", "optional")}
+      <div class="mt-5 flex gap-2"><button id="wdGo" class="flex-1 rounded-xl bg-[var(--accent)] px-4 py-2.5 text-[15px] font-bold text-[#12151b] opacity-50" disabled>Make the pictures</button><button id="wdClose" class="rounded-xl border border-line bg-card2 px-4 py-2.5 text-[15px] font-semibold">Close</button></div>
+      ${have ? `<button id="wdRemove" class="mt-3 text-xs text-faint underline">Remove the pictures from this browser</button>` : ""}
+      <div id="wdMsg" class="mt-3 text-sm text-dim"></div><div id="wdErr" class="mt-1 text-sm text-bad"></div></div>`;
+    document.body.appendChild(el);
+    const chosen = {pck: null, dll: null};
+    const choose = (key, accept, tid) => { const i = document.createElement("input"); i.type = "file"; i.accept = accept; i.onchange = () => { if (i.files[0]) { chosen[key] = i.files[0]; $(tid).textContent = i.files[0].name; $("wdGo").disabled = !chosen.pck; $("wdGo").style.opacity = chosen.pck ? 1 : .5; } }; i.click(); };
+    $("wdPck").onclick = () => choose("pck", ".pck", "wdPckT");
+    $("wdDll").onclick = () => choose("dll", ".dll", "wdDllT");
+    $("wdClose").onclick = () => { if (!el.dataset.busy) el.remove(); };
+    if ($("wdRemove")) $("wdRemove").onclick = async () => { await artDel(); applyArt(null); await reloadArtUi(); el.remove(); };
+    $("wdGo").onclick = () => {
+      el.dataset.busy = "1"; $("wdGo").disabled = true; $("wdGo").style.opacity = .5; $("wdErr").textContent = "";
+      const root = new URL(".", location.href).href;
+      const w = new Worker("static/artworker.js");
+      w.onmessage = async ev => {
+        const d = ev.data;
+        if (d.msg) $("wdMsg").textContent = d.msg;
+        if (d.error) { $("wdErr").textContent = "That did not work: " + d.error; delete el.dataset.busy; $("wdGo").disabled = false; $("wdGo").style.opacity = 1; w.terminate(); }
+        if (d.done) {
+          w.terminate();
+          const rec = {files: d.files, info: d.info};
+          try { await artPut(rec); } catch (e) { $("wdErr").textContent = "Pictures are ready but could not be kept for next time (browser storage refused)."; }
+          applyArt(rec); await reloadArtUi(); $("wdMsg").textContent = "Done."; delete el.dataset.busy; setTimeout(() => el.remove(), 600);
+        }
+      };
+      w.onerror = ev => { $("wdErr").textContent = "That did not work: " + (ev.message || "the worker failed"); delete el.dataset.busy; $("wdGo").disabled = false; $("wdGo").style.opacity = 1; };
+      w.postMessage({pck: chosen.pck, dll: chosen.dll, base: BASE, pyBase: root + "py/"});
+    };
+  }
+  window.__webArtApply = async rec => { applyArt(rec); };   // test hook
+
   // ---------- the page talks to Python through this
   window.WEB_API = async function (name, args) {
     await booted;
@@ -153,8 +228,9 @@ def call(name, args_json):
   };
 
   window.__webLoad = fs => finish(fs, $("webStart"));
+  window.WEB_ART_READY = artGet().then(rec => { if (rec) applyArt(rec); }).catch(() => {});
   document.addEventListener("DOMContentLoaded", () => {
-    startup();
+    startup(); artButton(); window.WEB_ART_READY.then(artButton);
     const fb = $("folderBtn");
     if (fb) fb.addEventListener("click", async e => {
       e.stopImmediatePropagation();
