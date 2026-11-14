@@ -4,6 +4,16 @@ A second-monitor coaching tool for **Slay the Spire 2**. It reads your finished 
 
 It never writes to the game folder and never reads runs in progress. Everything stays on your PC.
 
+## Try it in your browser (nothing to download)
+**https://dimmenfredrik.github.io/sts2-coach/**
+
+Open the page in Chrome or Edge, press **Choose run files**, and pick your `.run` files from
+`%APPDATA%\SlayTheSpire2\steam\<your steam id>\profile1\saves\history` (paste that path into the address bar of the window that opens, press Ctrl+A, then Open). You can also drag the files onto the page.
+
+**Is it safe?** Nothing is uploaded. The page runs the same Python analysis inside your own browser, the files are only read, and the whole source is in this repo (branch `web` is exactly what the page serves; `tools/make_web.py` on branch `v4` builds it). You can check with your browser's network tab, or switch off your internet after the page has loaded and it still works.
+
+The browser version has no card pictures or exact card numbers (those are built from your own game files) and cannot refresh by itself: pick the files again after a new run. The downloadable version below finds your runs by itself, refreshes automatically and shows the pictures.
+
 ## Latest version: `sts2_coach_v3/`
 Local web app, Windows, Python 3 (standard library only).
 
