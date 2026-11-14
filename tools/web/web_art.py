@@ -59,12 +59,11 @@ def build(pck_file, dll_path, progress):
     files, n = {}, len(jobs)
     for i, (kind, p, stem) in enumerate(jobs):
         try:
-            img = X.texture_for(pck, p)
+            img = X.make_image(pck, kind, p)
             if img is not None:
-                if img.width > X.MAXW:
-                    img = img.resize((X.MAXW, round(img.height * X.MAXW / img.width)), X.Image.LANCZOS)
+                img = X.fit(img, stem)
                 buf = io.BytesIO()
-                img.save(buf, "WEBP", quality=88)
+                img.save(buf, "WEBP", quality=85 if stem.startswith("char_splash_") else 88)
                 files[stem + ".webp"] = buf.getvalue()
         except Exception:
             pass

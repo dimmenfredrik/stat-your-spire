@@ -16,6 +16,7 @@ import io, json, os, re, struct, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ART = os.path.join(HERE, "art")
 MAXW = 420
+SPLASHW = 1000
 CANDIDATES = [
     r"C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\SlayTheSpire2.pck",
     r"C:\Program Files\Steam\steamapps\common\Slay the Spire 2\SlayTheSpire2.pck",
@@ -131,10 +132,41 @@ def texture_for(pck, import_path):
     return None
 
 
+def fit(img, key):
+    """Shrink a picture to the size we keep (the big character-select scenes get more room)."""
+    cap = SPLASHW if key.startswith("char_splash_") else MAXW
+    if img.width > cap:
+        img = img.resize((cap, round(img.height * cap / img.width)), Image.LANCZOS)
+    return img
+
+
+def render_splash(pck, tres_path):
+    """The character-select scene (what the game shows before a run), drawn from the game's own Spine files."""
+    import spine_art
+    t = pck.read(tres_path).decode("utf-8", "replace")
+    sk = re.search(r'path="res://([^"]+\.skel)"', t).group(1)
+    at = re.search(r'path="res://([^"]+\.atlas)"', t).group(1)
+    def imp(p, ext):
+        stem = os.path.basename(p)[:-len(ext)]
+        pre = ".godot/imported/" + stem + "." + ext[1:] + "-"
+        return next(e for e in pck.ents if e.startswith(pre))
+    skel = pck.read(imp(sk, ".skel"))
+    atlas = json.loads(pck.read(imp(at, ".atlas")))["atlas_data"]
+    png = re.search(r"^(.+\.png)$", atlas, re.M).group(1)
+    tex = texture_for(pck, os.path.dirname(at) + "/" + png + ".import")
+    im = spine_art.render_skeleton(skel, atlas, tex, scale=0.25, ss=2)
+    return im
+
+
+def make_image(pck, kind, p):
+    if kind == "splash":
+        return render_splash(pck, p)
+    return texture_for(pck, p)
+
+
 def save(img, key):
-    if img.width > MAXW:
-        img = img.resize((MAXW, round(img.height * MAXW / img.width)), Image.LANCZOS)
-    img.save(os.path.join(ART, key + ".webp"), "WEBP", quality=88)
+    img = fit(img, key)
+    img.save(os.path.join(ART, key + ".webp"), "WEBP", quality=85 if key.startswith("char_splash_") else 88)
 
 
 def resolve_upgrade(t, upgraded):
@@ -235,6 +267,10 @@ def collect_jobs(pck):
         m = re.match(r"images/packed/character_select/char_select_([a-z]+)\.png\.import$", p)
         if m and m.group(1) not in ("random", "rotating", "player_icon", "lock3", "outline", "button_mask"):
             jobs.append(("char", p, "char_portrait_" + m.group(1)))
+    for p in pck.ents:   # the big character-select scenes
+        m = re.match(r"animations/character_select/([a-z]+)/[a-z_]*skel_data\.tres$", p)
+        if m:
+            jobs.append(("splash", p, "char_splash_" + m.group(1)))
     have = {j[2] for j in jobs}
     jobs += [j for j in beta_jobs if j[2] not in have]   # early-access placeholder art only where nothing better exists
     return jobs
@@ -279,7 +315,7 @@ def build_info(pck, cards):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     quiet = "--if-missing" in sys.argv
-    if quiet and os.path.isfile(os.path.join(ART, "descriptions.json")) and os.path.isfile(os.path.join(ART, "char_icon_ironclad.webp")):
+    if quiet and os.path.isfile(os.path.join(ART, "descriptions.json")) and os.path.isfile(os.path.join(ART, "char_splash_ironclad.webp")):
         return 0                                   # already built on this PC
     path = args[0] if args else find_pck()
     if not path:
@@ -292,7 +328,7 @@ def main():
     done = fail = 0
     for kind, p, stem in jobs:
         try:
-            img = texture_for(pck, p)
+            img = make_image(pck, kind, p)
             if img is None:
                 fail += 1
                 continue

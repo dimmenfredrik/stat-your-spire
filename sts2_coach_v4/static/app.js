@@ -87,7 +87,7 @@ function renderAll() {
 function renderSidebar() {
   $("#chars").innerHTML = D.sidebar.map(e => {
     const sel = e.name === S.character, c = e.name === ALL ? "#e9edf3" : themeColor(e.name);
-    return `<button data-char="${esc(e.name)}" class="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition ${sel ? "bg-card2 font-semibold" : "text-dim hover:bg-card"}" ${sel ? `style="box-shadow:inset 3px 0 0 ${c}"` : ""}>
+    return `<button data-char="${esc(e.name)}" class="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition ${sel ? "bg-card2 font-semibold" : "text-dim hover:bg-card"}" ${sel ? `style="box-shadow:inset 3px 0 0 ${c};background-image:linear-gradient(90deg,${hexA(c, .42)},transparent 90%)"` : e.name !== ALL && charArt(e.name, "icon") ? `style="background-image:linear-gradient(90deg,${hexA(c, .13)},transparent 70%)"` : ""}>
       ${e.name !== ALL && charArt(e.name, "icon") ? `<span class="grid size-5 place-items-center">${charIcon(e.name, 20)}</span>` : `<span class="size-2.5 rounded-full" style="background:${c}"></span>`}<span class="flex-1 truncate">${esc(e.name)}</span>
       <span class="num text-xs text-faint">${e.w}-${e.l}</span><span class="num text-xs w-9 text-right font-semibold ${e.pct >= 25 ? "text-good" : "text-faint"}">${num(e.pct)}%</span></button>`;
   }).join("");
@@ -105,10 +105,14 @@ function renderBanner() {
   const chars = D.sidebar.filter(e => e.name !== ALL && charArt(e.name, "icon"));
   $("#bannerIcon").innerHTML = S.character !== ALL ? (charArt(S.character, "icon") ? charIcon(S.character, 52) : dot)
     : (chars.length ? `<span class="flex gap-1">${chars.map(e => charIcon(e.name, 32)).join("")}</span>` : dot);
-  const por = S.character !== ALL ? charArt(S.character, "portrait") : "";
+  const splash = S.character !== ALL ? charArt(S.character, "splash") : "";
+  const por = S.character !== ALL && !splash ? charArt(S.character, "portrait") : "";
   const ba = $("#bannerArt");
-  ba.classList.toggle("hidden", !por);
-  ba.innerHTML = por ? `<img src="${por}" alt="" class="h-full w-full rounded-xl object-cover ring-1 ring-white/15 shadow-lg">` : "";
+  ba.classList.toggle("hidden", !splash && !por);
+  ba.className = "pointer-events-none absolute " + (splash ? "inset-y-0 right-0 w-[66%]" : "inset-y-3 right-3 aspect-[132/196]") + (splash || por ? "" : " hidden");
+  const fade = "-webkit-mask-image:linear-gradient(90deg,transparent,#000 60%);mask-image:linear-gradient(90deg,transparent,#000 60%);object-position:50% 18%";
+  ba.innerHTML = splash ? `<img src="${splash}" alt="" style="${fade}" class="h-full w-full object-cover">`
+    : por ? `<img src="${por}" alt="" class="h-full w-full rounded-xl object-cover ring-1 ring-white/15 shadow-lg">` : "";
 }
 function renderTabs() {
   const tabs = [["focus", "Focus"], ["dash", "Dashboard"], ["habits", "Habits"], ["cards", "Cards"]];
