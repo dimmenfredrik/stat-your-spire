@@ -162,14 +162,14 @@ function renderBanner() {
   ba.innerHTML = "";
 }
 function renderTabs() {
-  const tabs = [["focus", "Focus"], ["dash", "Dashboard"], ["habits", "Habits"], ["cards", "Cards"]];
+  const tabs = [["focus", "Focus"], ["dash", "Dashboard"], ["habits", "Habits"], ["cards", "Cards"], ["builds", "Best builds"]];
   $("#tabs").innerHTML = tabs.map(([k, l]) => `<button data-tab="${k}" class="relative py-3 text-[15px] font-semibold transition ${S.tab === k ? "text-ink" : "text-dim hover:text-ink"}">${l}
     ${S.tab === k ? `<span class="absolute inset-x-0 -bottom-px h-[3px] rounded-t bg-[var(--accent)]"></span>` : ""}</button>`).join("");
 }
 function renderView() {
   Object.values(charts).forEach(c => c.destroy()); charts = {};
   const v = $("#view");
-  v.innerHTML = `<div class="fade">${S.tab === "focus" ? viewFocus() : S.tab === "dash" ? viewDash() : S.tab === "habits" ? viewHabits() + viewDanger() : viewCards()}</div>`;
+  v.innerHTML = `<div class="fade">${S.tab === "focus" ? viewFocus() : S.tab === "dash" ? viewDash() : S.tab === "habits" ? viewHabits() + viewDanger() : S.tab === "builds" ? viewBuilds() : viewCards()}</div>`;
   if (S.tab === "dash") for (const f of S.open) openRunBody(f, true);
 }
 

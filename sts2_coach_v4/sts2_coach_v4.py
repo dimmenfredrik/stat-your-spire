@@ -1015,6 +1015,121 @@ def card_json(x):
 # Danger list (new in v4): which fights cost the most HP and which ones ended runs.
 # Read-only summary of finished runs; does not touch any habit thresholds.
 # --------------------------------------------------------------------------
+BB_MIN_RUNS = 5          # a character needs this many decided runs to get a builds page
+BB_MIN_CARD = 4          # a card/relic needs to show up in this many runs before it counts
+
+
+def best_builds(runs, inc):
+    """Per character: what wins and what loses, read from the final deck + relics of finished runs.
+    Only counts and win rates of your own runs - no new scoring, no thresholds beyond LEAN_DECK / BLOAT_DECK."""
+    by = defaultdict(list)
+    for r in runs:
+        if r["win"] or is_loss(r, inc):
+            by[r["character"]].append(r)
+    out = []
+    for ch, rs in sorted(by.items(), key=lambda kv: -len(kv[1])):
+        w = [r for r in rs if r["win"]]
+        n, nw = len(rs), len(w)
+        base = pct(nw, n)
+        lo = [r for r in rs if not r["win"]]
+
+        def picked(r):          # cards taken during the run (not the starting deck), upgraded ones count as the plain card
+            return {c["n"] for c in r["deck"] if (c.get("f") or 0) > 1}
+
+        def wr_of(sel):
+            return pct(sum(1 for r in sel if r["win"]), len(sel))
+
+        # cards: win rate in runs whose final deck has the card vs runs without it
+        cstat = {}
+        for r in rs:
+            for c in picked(r):
+                cstat.setdefault(c, []).append(r)
+        cards = []
+        for c, has in cstat.items():
+            if len(has) < BB_MIN_CARD:
+                continue
+            hs = set(id(x) for x in has)
+            without = [r for r in rs if id(r) not in hs]
+            if len(without) < BB_MIN_CARD:
+                continue
+            up = sum(1 for r in has for d in r["deck"] if d["n"] == c and d["u"]) > len(has) / 2
+            cards.append({"n": c, "runs": len(has), "wins": sum(1 for x in has if x["win"]), "wr": round(wr_of(has), 1),
+                          "lift": round(wr_of(has) - wr_of(without)), "up": up})
+        good = sorted([c for c in cards if c["lift"] >= 10], key=lambda c: (-c["lift"], -c["runs"]))[:5]
+        bad = sorted([c for c in cards if c["lift"] <= -10], key=lambda c: (c["lift"], -c["runs"]))[:5]
+
+        def core(sel):          # win rate of runs that hold at least 2 of the shown cards (1 if that is too few runs)
+            names = {c["n"] for c in sel}
+            for k in (2, 1):
+                runs_k = [r for r in rs if len(names & picked(r)) >= k]
+                if len(runs_k) >= 3 or k == 1:
+                    return {"runs": len(runs_k), "wins": sum(1 for r in runs_k if r["win"]), "wr": round(wr_of(runs_k)), "k": k}
+
+        # relics
+        rstat = {}
+        for r in rs:
+            for x in set(r["relics_final"]):
+                rstat.setdefault(x, []).append(r)
+        relics = [{"n": x, "runs": len(v), "wins": sum(1 for r in v if r["win"]), "wr": round(wr_of(v))}
+                  for x, v in rstat.items() if len(v) >= BB_MIN_CARD]
+        relics.sort(key=lambda x: (-x["wr"], -x["runs"]))
+        best_relics = [x for x in relics if x["wr"] > base][:4]
+
+        # deck size
+        lean = [r for r in rs if r["deck_size"] <= LEAN_DECK]
+        bloat = [r for r in rs if r["deck_size"] >= BLOAT_DECK]
+        size = lambda sel: {"runs": len(sel), "wins": sum(1 for r in sel if r["win"]), "wr": round(wr_of(sel))}
+
+        # who kills you
+        kills = defaultdict(list)
+        for r in lo:
+            foe, kind, label = _end_foe(r)
+            if r["killer"]:
+                kills[r["killer"]].append((foe, kind))
+        top = sorted(kills.items(), key=lambda kv: -len(kv[1]))[:1]
+        killer = None
+        if top and lo:
+            name, lst = top[0]
+            killer = {"name": name, "n": len(lst), "of": len(lo), "foe": lst[0][0], "kind": lst[0][1]}
+
+        # recent form: your 10 newest finished runs of this character that match each build (rs is newest first)
+        last10 = rs[:10]
+
+        def recent(match):
+            sel = [r for r in last10 if match(r)]
+            return {"n": len(sel), "wins": sum(1 for r in sel if r["win"])}
+
+        gnames = {c["n"] for c in good}
+        bnames = {c["n"] for c in bad}
+        gk = (core(good) or {}).get("k", 1) if good else 1
+        bk = (core(bad) or {}).get("k", 1) if bad else 1
+        # pairs that win together (same thresholds as the pair table used elsewhere)
+        strong = pair_table(rs, inc)
+        top_pairs = sorted(strong.values(), key=lambda s: (-s["win_share"], -s["lift"], s["a"], s["b"]))[:3]
+        pairs = [{"a": s["a"], "b": s["b"], "n": s["n"], "w": s["w"], "wr": round(s["wr"]), "lift": round(s["lift"]),
+                  "recent": recent(lambda r, a=s["a"], b=s["b"]: a in picked(r) and b in picked(r))} for s in top_pairs]
+
+        out.append({
+            "pairs": pairs,
+            "last10": {"n": len(last10), "wins": sum(1 for r in last10 if r["win"]),
+                       "before_n": n - len(last10), "before_wins": nw - sum(1 for r in last10 if r["win"])},
+            "lean_recent": recent(lambda r: r["deck_size"] <= LEAN_DECK),
+            "bloat_recent": recent(lambda r: r["deck_size"] >= BLOAT_DECK),
+            "good_recent": recent(lambda r: len(gnames & picked(r)) >= gk) if good else None,
+            "bad_recent": recent(lambda r: len(bnames & picked(r)) >= bk) if bad else None,
+            "character": ch, "color": char_color(ch), "runs": n, "wins": nw, "wr": round(base),
+            "enough": n >= BB_MIN_RUNS,
+            "avg_win": round(avg([r["deck_size"] for r in w])) if w else None,
+            "avg_loss": round(avg([r["deck_size"] for r in lo])) if lo else None,
+            "best_relic": best_relics[0] if best_relics else None,
+            "good_cards": good, "good_core": core(good) if good else None,
+            "bad_cards": bad, "bad_core": core(bad) if bad else None,
+            "relics": best_relics, "lean": size(lean) if lean else None, "bloat": size(bloat) if bloat else None,
+            "killer": killer, "lean_max": LEAN_DECK, "bloat_min": BLOAT_DECK,
+        })
+    return out
+
+
 def danger_list(runs, inc, limit=10):
     stats = {}
     for r in runs:
@@ -1687,6 +1802,7 @@ class CoachAPI:
         # --- habits + gameplan ---
         out["habits"] = self._habits(runs, inc, character, asc, rng)
         out["danger"] = danger_list(runs, inc)
+        out["builds"] = best_builds(scope(all_runs), inc)
 
         # --- stats ---
         present = {f["act_id"] for r in runs for f in r["floors"]}
