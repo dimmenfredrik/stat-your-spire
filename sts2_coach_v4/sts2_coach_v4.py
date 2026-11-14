@@ -993,6 +993,39 @@ def card_json(x):
     return {k: x.get(k) for k in keys}
 
 
+
+# --------------------------------------------------------------------------
+# Danger list (new in v4): which fights cost the most HP and which ones ended runs.
+# Read-only summary of finished runs; does not touch any habit thresholds.
+# --------------------------------------------------------------------------
+def danger_list(runs, inc, limit=10):
+    stats = {}
+    for r in runs:
+        lost = is_loss(r, inc)
+        for i, f in enumerate(r["floors"]):
+            if not f["is_combat"] or not f["encounter"]:
+                continue
+            e = stats.setdefault(f["encounter"], {"name": f["label"], "kind": f["room_type"], "n": 0, "dmg": 0,
+                                                  "worst": 0, "maxhp": [], "deaths": 0})
+            e["n"] += 1
+            e["dmg"] += f["damage"]
+            e["worst"] = max(e["worst"], f["damage"])
+            if f["max_hp"]:
+                e["maxhp"].append(f["max_hp"])
+            if lost and i == len(r["floors"]) - 1 and r.get("killer_id") == f["encounter"]:
+                e["deaths"] += 1
+    out = []
+    for enc, e in stats.items():
+        if e["n"] < 2 and e["deaths"] < 1:
+            continue
+        avg_dmg = e["dmg"] / e["n"]
+        avg_max = sum(e["maxhp"]) / len(e["maxhp"]) if e["maxhp"] else 0
+        out.append({"name": e["name"], "kind": e["kind"], "n": e["n"], "deaths": e["deaths"],
+                    "avg_dmg": round(avg_dmg), "worst": e["worst"],
+                    "pct": round(avg_dmg / avg_max * 100) if avg_max else 0})
+    out.sort(key=lambda x: (-x["deaths"], -x["pct"], -x["n"]))
+    return out[:limit]
+
 def run_brief(r):
     return {
         "file": r["file"], "character": r["character"], "multiplayer": r["multiplayer"],
@@ -1622,6 +1655,7 @@ class CoachAPI:
 
         # --- habits + gameplan ---
         out["habits"] = self._habits(runs, inc, character, asc, rng)
+        out["danger"] = danger_list(runs, inc)
 
         # --- stats ---
         present = {f["act_id"] for r in runs for f in r["floors"]}

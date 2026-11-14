@@ -11,7 +11,7 @@ async function api(name, ...args) {
   const r = await fetch("/api/" + name, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(args)});
   return r.json();
 }
-const S = {character: ALL, asc: "All", range: "All runs", quits: false, coop: true, auto: true, tab: "dash",
+const S = {character: ALL, asc: "All", range: "All runs", quits: false, coop: true, auto: true, tab: "focus",
            feedN: 12, open: new Set(), sort: {key: "lift", desc: true}, search: "", expandedHabits: new Set()};
 let D = null, busy = false, again = false, charts = {}, INIT = null;
 
@@ -99,14 +99,14 @@ function renderBanner() {
   $("#build").textContent = D.current_build ? "build " + D.current_build : "";
 }
 function renderTabs() {
-  const tabs = [["dash", "Dashboard"], ["habits", "Habits"], ["cards", "Cards"]];
+  const tabs = [["focus", "Focus"], ["dash", "Dashboard"], ["habits", "Habits"], ["cards", "Cards"]];
   $("#tabs").innerHTML = tabs.map(([k, l]) => `<button data-tab="${k}" class="relative py-3 text-[15px] font-semibold transition ${S.tab === k ? "text-ink" : "text-dim hover:text-ink"}">${l}
     ${S.tab === k ? `<span class="absolute inset-x-0 -bottom-px h-[3px] rounded-t bg-[var(--accent)]"></span>` : ""}</button>`).join("");
 }
 function renderView() {
   Object.values(charts).forEach(c => c.destroy()); charts = {};
   const v = $("#view");
-  v.innerHTML = `<div class="fade">${S.tab === "dash" ? viewDash() : S.tab === "habits" ? viewHabits() : viewCards()}</div>`;
+  v.innerHTML = `<div class="fade">${S.tab === "focus" ? viewFocus() : S.tab === "dash" ? viewDash() : S.tab === "habits" ? viewHabits() + viewDanger() : viewCards()}</div>`;
   if (S.tab === "dash") for (const f of S.open) openRunBody(f, true);
 }
 
@@ -202,12 +202,17 @@ function autopsyStory(r, file, tpOnly = false) {
     const hp = [f.damage ? `<span class="${f.big ? "text-bad font-bold" : "text-warn"}">−${f.damage}</span>` : "", f.healed ? `<span class="text-good">+${f.healed}</span>` : ""].filter(Boolean).join(" ") || `<span class="text-faint">0</span>`;
     const chips = [];
     if (f.card_choices.length && f.map_type !== "shop") {
-      f.card_choices.forEach(([n, p]) => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] ${p ? "bg-good/15 text-good font-semibold" : "bg-card2 text-faint line-through"}">${p ? "✔ " : ""}${wikiA(n, artImg(n, 30) + esc(n))}</span>`));
-      if (!f.card_choices.some(c => c[1])) chips.push(`<span class="text-[11px] font-semibold text-warn">skipped</span>`);
+      const tiles = f.card_choices.map(([n, p]) => {
+        const file = ART.get(artKey(n));
+        if (!file) return `<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] ${p ? "bg-good/15 text-good font-semibold" : "bg-card2 text-faint line-through"}">${p ? "✔ " : ""}${wikiA(n, esc(n))}</span>`;
+        return wikiA(n, `<span class="block w-[80px]"><img src="/art/${encodeURIComponent(file)}" alt="" loading="lazy" class="h-[52px] w-[80px] object-cover rounded-md ${p ? "ring-2 ring-good" : "opacity-40 grayscale"}"><span class="mt-0.5 block text-[11px] leading-tight ${p ? "text-good font-semibold" : "text-faint"}">${p ? "✔ " : ""}${esc(n)}</span></span>`)
+          .replace('class="underline', 'class="block no-underline ');
+      });
+      chips.push(`<div class="flex flex-wrap gap-2 items-start w-full mb-1">${tiles.join("")}${f.card_choices.some(c => c[1]) ? "" : `<span class="self-center text-[11px] font-semibold text-warn">skipped</span>`}</div>`);
     }
     const gained = [...f.cards_other, ...f.bought_cards];
-    gained.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">+ ${wikiA(n, artImg(n, 30) + esc(n))}</span>`));
-    f.relics.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">◆ ${wikiA(n, artImg(n, 30) + esc(n))}</span>`));
+    gained.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">+ ${wikiA(n, artImg(n, 44) + esc(n))}</span>`));
+    f.relics.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">◆ ${wikiA(n, artImg(n, 44) + esc(n))}</span>`));
     f.potions_picked.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">⚗ ${esc(n)}</span>`));
     f.potions_used.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-good/15 text-good">used ${esc(n)}</span>`));
     f.potions_discarded.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">tossed ${esc(n)}</span>`));
@@ -222,7 +227,7 @@ function autopsyStory(r, file, tpOnly = false) {
       <td class="num px-3 py-2 text-sm text-right align-top">${hp}</td>
       <td class="num px-3 py-2 text-xs text-right align-top ${f.hp === 0 ? "text-bad font-bold" : "text-dim"}">${f.hp === null ? "?" : f.hp + "/" + f.max_hp}</td>
       <td class="num px-3 py-2 text-xs text-right align-top ${f.gold >= 200 ? "text-warn font-bold" : "text-dim"}">${f.gold ?? "?"}</td>
-      <td class="px-3 py-2 align-top"><div class="flex flex-wrap gap-1">${chips.join("")}</div></td></tr>`);
+      <td class="px-3 py-2 align-top min-w-[280px]"><div class="flex flex-wrap gap-1">${chips.join("")}</div></td></tr>`);
   }
   return `<div class="flex items-center justify-between gap-3 flex-wrap mb-3">
       <div class="flex flex-wrap gap-2 items-center"><span class="text-[11px] font-bold tracking-wider text-faint mr-1">TURNING POINTS</span>${tps}</div>
