@@ -12,7 +12,7 @@ onmessage = async e => {
     post("Loading the code reader...");
     await py.runPythonAsync("import micropip\nawait micropip.install(['dnfile', 'dncil'])");
     py.FS.mkdirTree("/app");
-    for (const n of ["extract_art_from_game.py", "card_values.py", "spine_art.py", "web_art.py"])
+    for (const n of ["extract_art_from_game.py", "card_values.py", "web_art.py"])
       py.FS.writeFile("/app/" + n, await (await fetch(pyBase + n)).text());
     const frs = new FileReaderSync();
     py.globals.set("read_range", (o, n) => new Uint8Array(frs.readAsArrayBuffer(pck.slice(o, o + n))));
