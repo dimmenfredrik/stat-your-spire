@@ -12,7 +12,7 @@ Open the page in Chrome or Edge, press **Choose run files**, and pick your `.run
 
 **Is it safe?** Nothing is uploaded. The page runs the same Python analysis inside your own browser, the files are only read, and the whole source is in this repo (branch `web` is exactly what the page serves; `tools/make_web.py` on branch `v4` builds it). You can check with your browser's network tab, or switch off your internet after the page has loaded and it still works.
 
-The browser version has no card pictures or exact card numbers (those are built from your own game files) and cannot refresh by itself: pick the files again after a new run. The downloadable version below finds your runs by itself, refreshes automatically and shows the pictures.
+The browser version remembers your runs in your own browser (never uploaded), so a refresh does not ask again. Card pictures and exact card numbers are optional: use the "Add card pictures" button in the sidebar and the page builds them once, right in your browser, from your own copy of the game (the game files are only read, and nothing is uploaded). It cannot refresh by itself while you play: choose the files again after a new run. The downloadable version below finds your runs by itself and refreshes automatically.
 
 ## Latest version: `sts2_coach_v3/`
 Local web app, Windows, Python 3 (standard library only).
