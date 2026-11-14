@@ -113,7 +113,7 @@ def call(name, args_json):
           <li class="flex gap-2.5"><span class="grid size-5 shrink-0 place-items-center rounded-full bg-[var(--accent)]/20 text-[11px] font-extrabold text-[var(--accent)]">3</span><span>That is it. You can also drag the run files onto this page.</span></li></ol>
         <div id="wsMsg" class="mt-4 text-sm text-dim"></div>
         <div id="wsErr" class="mt-2 text-sm text-bad"></div>
-        <p class="mt-5 text-[11px] text-faint">Want card pictures, exact card numbers and automatic refresh? Get the <a class="underline" href="https://github.com/dimmenfredrik/sts2-coach" target="_blank" rel="noopener">downloadable version</a>. Unofficial fan tool, not affiliated with Mega Crit.</p></div></div>`;
+        <p class="mt-5 text-[11px] text-faint">Want it to refresh by itself while you play? Get the <a class="underline" href="https://github.com/dimmenfredrik/sts2-coach" target="_blank" rel="noopener">downloadable version</a>. Unofficial fan tool, not affiliated with Mega Crit.</p></div></div>`;
     document.body.appendChild(el);
     $("wsCopy").onclick = () => { navigator.clipboard && navigator.clipboard.writeText("%APPDATA%\\SlayTheSpire2\\steam"); $("wsCopy").textContent = "Copied"; };
     return el;
