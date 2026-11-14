@@ -5,7 +5,7 @@ const EN_LVL = {bad: "bg-bad/15 text-[#ff8a93]", warn: "bg-warn/15 text-[#ffcf7a
 function enemyCard(e) {
   const col = e.good ? "#4ade80" : EN_COL[e.kind] || EN_COL.monster;
   const nm = e.name.replace(/\s*\((elite|weak|boss)\)\s*$/i, "");
-  const url = enemyUrl(e.foe) || (e.kind === "boss" ? bossArt(nm) : "");
+  const url = enemyPic(e.foe, nm, e.kind);
   const ring = url ? halo(url, 78, 58, col, true) : haloIcon(BB_ICON.skull.replace(/16/g, "30"), 78, col);
   const tag = e.good ? ["GOING WELL", "#4ade80"] : e.kind === "boss" ? ["BOSS", EN_COL.boss] : e.kind === "elite" ? ["ELITE", EN_COL.elite] : ["FIGHT", "#8aa0d6"];
   const chips = e.problems.map(p => `<span class="inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${p.k === "dmg" || p.k === "potions" ? EN_LVL.bad : EN_LVL.warn}">${esc(p.label)}</span>`).join("");

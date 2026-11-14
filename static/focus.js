@@ -8,7 +8,7 @@ function dangerRow(d, big) {
   const plan = d.kind === "boss" ? "Plan your HP and potions for this boss before the act ends."
     : d.kind === "elite" ? "Optional fight: only take it when you are healthy."
     : "Costs a lot of HP: block earlier and use potions here.";
-  const pic = d.kind === "boss" ? bossArt(d.name) : "";
+  const pic = enemyPic(d.foe, d.name, d.kind);
   return `<div class="relative overflow-hidden rounded-xl border border-line bg-card p-4">
     ${pic ? `<div class="pointer-events-none absolute inset-0" style="background:radial-gradient(circle at 92% 40%,rgba(255,107,107,.26),transparent 55%)"></div><div class="pointer-events-none absolute right-3 top-3">${halo(pic, 58, 44, "#ff6b6b")}</div>` : ""}
     <div class="relative flex items-center gap-2 flex-wrap ${pic ? "pr-14" : ""}"><span class="${big ? "text-lg" : "text-base"} font-bold">${wikiMulti(d.name.replace(/\s*\((elite|weak|BOSS)\)\s*$/i, ""))}</span><span class="rounded-full px-2.5 py-0.5 text-[10.5px] font-extrabold ${kc}">${kl}</span></div>

@@ -1152,7 +1152,9 @@ def danger_list(runs, inc, limit=10):
             if not f["is_combat"] or not f["encounter"]:
                 continue
             e = stats.setdefault(f["encounter"], {"name": f["label"], "kind": f["room_type"], "n": 0, "dmg": 0,
-                                                  "worst": 0, "maxhp": [], "deaths": 0})
+                                                  "worst": 0, "maxhp": [], "deaths": 0, "foe": ""})
+            if not e["foe"] and f.get("monster_ids"):
+                e["foe"] = f["monster_ids"][0].split(".")[-1].lower()
             e["n"] += 1
             e["dmg"] += f["damage"]
             e["worst"] = max(e["worst"], f["damage"])
@@ -1166,7 +1168,7 @@ def danger_list(runs, inc, limit=10):
             continue
         avg_dmg = e["dmg"] / e["n"]
         avg_max = sum(e["maxhp"]) / len(e["maxhp"]) if e["maxhp"] else 0
-        out.append({"name": e["name"], "kind": e["kind"], "n": e["n"], "deaths": e["deaths"],
+        out.append({"name": e["name"], "kind": e["kind"], "foe": e["foe"], "n": e["n"], "deaths": e["deaths"],
                     "avg_dmg": round(avg_dmg), "worst": e["worst"],
                     "pct": round(avg_dmg / avg_max * 100) if avg_max else 0})
     out.sort(key=lambda x: (-x["deaths"], -x["pct"], -x["n"]))
