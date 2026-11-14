@@ -8,6 +8,7 @@ if not defined PY where python >nul 2>&1 && set "PY=python"
 if not defined PY goto nopython
 echo Starting STS2 Coach v3 - your browser will open at http://localhost:8765
 echo Keep this window open while you use it. Close it to stop the app.
+%PY% "%~dp0extract_art_from_game.py" --if-missing
 %PY% "%~dp0sts2_coach_v3.py"
 if errorlevel 1 pause
 exit /b

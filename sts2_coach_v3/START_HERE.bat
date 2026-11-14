@@ -33,6 +33,8 @@ echo Python found. Starting STS2 Coach...
 echo Your browser will open at http://localhost:8765
 echo Keep this window open while you use it. Close it to stop the app.
 echo.
+%PY% "%~dp0extract_art_from_game.py" --if-missing
+echo.
 %PY% "%~dp0sts2_coach_v3.py"
 if errorlevel 1 (
   echo.

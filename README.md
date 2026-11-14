@@ -14,8 +14,10 @@ Local web app, Windows, Python 3 (standard library only).
 If your runs aren't found, use *Change folder* in the sidebar. The history folder is
 `C:\Users\<you>\AppData\Roaming\SlayTheSpire2\steam\<steam id>\profile1\saves\history`.
 
-### Icons, wiki links and your own pictures
-Floors show small icons (fight, elite, boss, campfire, shop, event, treasure, ancient). Card, relic and enemy names link to the Slay the Spire wiki (dotted underline). If you want pictures, drop your own image files into `sts2_coach_v3/art/` (name them like `foolish_shot.png`); they show next to the matching name and are never uploaded. Hover a name to see a larger picture and a short description (descriptions come from an optional `art/descriptions.json`). This repo contains no game art.
+### Pictures and descriptions (built from your own game)
+Floors show small icons (fight, elite, boss, campfire, shop, event, treasure, ancient). Card, relic and enemy names link to the Slay the Spire wiki (dotted underline).
+
+The first time you start the coach, `extract_art_from_game.py` finds your installed Slay the Spire 2 through Steam, reads it (read-only) and builds card, relic, potion and event pictures plus short descriptions into `sts2_coach_v3/art/` (about 30 seconds, one time; Pillow is installed automatically). Hover a name for a larger picture and its description. The pictures are made on each player's own PC from their own copy of the game and are never uploaded: this repo contains no game art. If the game isn't found, the coach simply works without pictures. To rebuild after a game update, delete `art/descriptions.json` and start again. Enemies have no still pictures in the game files, so they keep the small icons.
 
 Optional `settings.json` next to `sts2_coach_v3.py` to rename a character: `{"character_names": {"Fool": "RealName"}}`.
 
