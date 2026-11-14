@@ -43,30 +43,91 @@ BIG_HIT_FRACTION = 0.30        # a fight costing >=30% of max HP is a "big hit"
 ACT_ORDER = ["ACT.OVERGROWTH", "ACT.UNDERDOCKS", "ACT.HIVE", "ACT.GLORY"]
 COMBAT_TYPES = ("monster", "elite", "boss")
 
-# Colours - modern dark theme
-BG = "#0f1115"          # window
-SIDEBAR = "#14171d"
-CARD = "#1b1f27"        # cards / panels
-CARD_HI = "#232834"     # hover / selected
-BORDER = "#2a303c"
-FG = "#e6e8ee"
-DIM = "#8a93a6"
-FAINT = "#5c6475"
-ACCENT = "#f0b35a"
-GOOD = "#5fd38d"
-BAD = "#ff6b6b"
-WARN = "#ffb547"
-INFO = "#6cb6ff"
+# Colours - deep teal theme (one ground, raised panels, mint accent for actions/selection)
+BG = "#04211f"          # page ground
+SIDEBAR = BG            # one background everywhere
+CARD = "#0f3531"        # raised panels
+CARD_HI = "#174641"     # hover / selected / nested surface
+BORDER = "#24544f"      # tracks and hairlines
+FG = "#fcfbfc"          # primary text
+DIM = "#c9d6d3"         # secondary text
+FAINT = "#9db8b3"       # labels, captions
+ACCENT = "#3fe0c5"      # buttons + selected state only
+ACCENT_HOVER = "#7bebd8"
+ON_ACCENT = "#040404"
+GOOD = "#9be37c"
+BAD = "#ff7b7b"
+WARN = "#ffc266"
+INFO = "#86c8ff"
+FOCUS_BG = "#0c3c37"
+DANGER_BG = "#3a2026"
 PANEL = CARD
 SEL = CARD_HI
 CHAR_COLORS = {
-    "Ironclad": "#ff6b6b", "Silent": "#5fd38d", "Defect": "#6cb6ff",
-    "Regent": "#f0b35a", "Necrobinder": "#c792ea", "Fool": "#ff8fc7",
+    "Ironclad": "#ff7b7b", "Silent": "#9be37c", "Defect": "#86c8ff",
+    "Regent": "#ffc266", "Necrobinder": "#d3a6ff", "Fool": "#ff9fd0",
 }
 FALLBACK_COLORS = ["#7fdbca", "#f78c6c", "#82aaff", "#c3e88d", "#ffcb6b"]
+# Fonts: Host Grotesk is embedded below (FONT_DATA) and loaded privately at start-up.
+# If that fails, Segoe UI is used.
 UI_FONT = "Segoe UI"
 UI_FONT_SEMI = "Segoe UI Semibold"
+DISPLAY_FONT = ("Segoe UI", "bold")
 MONO_FONT = "Consolas"
+
+
+def disp(size):
+    """Display (heading) font at a size: Host Grotesk ExtraBold, or bold Segoe UI as fallback."""
+    if isinstance(DISPLAY_FONT, tuple):
+        return (DISPLAY_FONT[0], size, DISPLAY_FONT[1])
+    return (DISPLAY_FONT, size)
+
+
+def install_fonts():
+    """Write the embedded Host Grotesk weights to disk and register them for this process only."""
+    import base64
+    import tempfile
+    try:
+        if sys.platform.startswith("win"):
+            base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+            folder = os.path.join(base, "sts2_coach", "fonts")
+        elif sys.platform.startswith("linux"):
+            folder = os.path.join(os.path.expanduser("~"), ".local", "share", "fonts", "sts2_coach")
+        else:
+            return False
+        os.makedirs(folder, exist_ok=True)
+        paths = []
+        for fam, chunks in FONT_DATA.items():
+            data = base64.b64decode("".join(chunks))
+            path = os.path.join(folder, fam.replace(" ", "") + ".ttf")
+            if not os.path.exists(path) or os.path.getsize(path) != len(data):
+                with open(path, "wb") as fh:
+                    fh.write(data)
+            paths.append(path)
+        if sys.platform.startswith("win"):
+            import ctypes
+            for p in paths:
+                ctypes.windll.gdi32.AddFontResourceExW(p, 0x10, 0)   # FR_PRIVATE
+        else:
+            import subprocess
+            subprocess.run(["fc-cache", "-f", folder], capture_output=True, timeout=20)
+        return True
+    except Exception:
+        return False
+
+
+def pick_fonts(root):
+    """After Tk starts, switch to Host Grotesk if it registered."""
+    global UI_FONT, UI_FONT_SEMI, DISPLAY_FONT
+    from tkinter import font as tkfont
+    fams = set(tkfont.families(root))
+    if "STS2 Host Grotesk" in fams:
+        UI_FONT = "STS2 Host Grotesk"
+        UI_FONT_SEMI = "STS2 Host Grotesk SemiBold" if "STS2 Host Grotesk SemiBold" in fams else UI_FONT
+        DISPLAY_FONT = ("STS2 Host Grotesk ExtraBold" if "STS2 Host Grotesk ExtraBold" in fams
+                        else (UI_FONT, "bold"))
+    elif "Segoe UI" not in fams:
+        UI_FONT, UI_FONT_SEMI, DISPLAY_FONT = "TkDefaultFont", "TkDefaultFont", ("TkDefaultFont", "bold")
 
 
 # --------------------------------------------------------------------------
@@ -816,6 +877,41 @@ def char_color(name, _cache={}):
 # --------------------------------------------------------------------------
 # Small modern widgets
 # --------------------------------------------------------------------------
+def rounded_rect(canvas, x1, y1, x2, y2, r, **kw):
+    """Draw a rounded rectangle on a canvas (soft corners)."""
+    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
+           x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    return canvas.create_polygon(pts, smooth=True, splinesteps=12, **kw)
+
+
+class PillButton(tk.Canvas):
+    """Rounded button. primary=True uses the mint accent fill (the main action)."""
+
+    def __init__(self, parent, text, command, primary=False, bg=None):
+        from tkinter import font as tkfont
+        self._font = tkfont.Font(family=UI_FONT_SEMI, size=10)
+        w = self._font.measure(text) + 32
+        h = self._font.metrics("linespace") + 16
+        super().__init__(parent, width=w, height=h, bg=bg or parent.cget("bg"), highlightthickness=0,
+                         cursor="hand2", takefocus=1)
+        self.primary = primary
+        self.command = command
+        self.colors = ((ACCENT, ACCENT_HOVER, ON_ACCENT) if primary else (CARD_HI, BORDER, FG))
+        self.shape = rounded_rect(self, 1, 1, w - 1, h - 1, 8, fill=self.colors[0],
+                                  outline=self.colors[0])
+        self.label = self.create_text(w / 2, h / 2, text=text, fill=self.colors[2], font=self._font)
+        self.bind("<Enter>", lambda e: self._paint(self.colors[1]))
+        self.bind("<Leave>", lambda e: self._paint(self.colors[0]))
+        self.bind("<Button-1>", lambda e: self.command())
+        self.bind("<Return>", lambda e: self.command())
+        self.bind("<space>", lambda e: self.command())
+        self.bind("<FocusIn>", lambda e: self.itemconfigure(self.shape, outline=FG, width=2))
+        self.bind("<FocusOut>", lambda e: self.itemconfigure(self.shape, outline=self.colors[0], width=1))
+
+    def _paint(self, fill):
+        self.itemconfigure(self.shape, fill=fill)
+
+
 class ScrollFrame(tk.Frame):
     """A vertically scrolling frame (mouse wheel works while hovering)."""
 
@@ -872,8 +968,8 @@ def text_widget(parent):
     txt.pack(side="left", fill="both", expand=True)
     sb.pack(side="right", fill="y")
     tags = {
-        "h1": dict(font=(UI_FONT_SEMI, 16), foreground=FG, spacing1=2, spacing3=6),
-        "h2": dict(font=(UI_FONT_SEMI, 12), foreground=ACCENT, spacing1=14, spacing3=6),
+        "h1": dict(font=disp(18), foreground=FG, spacing1=2, spacing3=6),
+        "h2": dict(font=disp(13), foreground=FG, spacing1=16, spacing3=6),
         "dim": dict(foreground=DIM), "faint": dict(foreground=FAINT),
         "good": dict(foreground=GOOD), "bad": dict(foreground=BAD),
         "warn": dict(foreground=WARN), "info": dict(foreground=INFO),
@@ -885,7 +981,7 @@ def text_widget(parent):
         "elite": dict(foreground=WARN, font=(MONO_FONT, 10, "bold")),
         "boss": dict(foreground=BAD, font=(MONO_FONT, 10, "bold")),
         "callout": dict(lmargin1=4, lmargin2=28, spacing1=3, spacing3=3, font=(UI_FONT, 10)),
-        "actbar": dict(background=CARD_HI, foreground=ACCENT, font=(UI_FONT_SEMI, 11),
+        "actbar": dict(background=CARD_HI, foreground=FG, font=(UI_FONT_SEMI, 11),
                        spacing1=12, spacing3=6, lmargin1=4),
         "ui": dict(font=(UI_FONT, 10)),
         "detail": dict(lmargin2=110),
@@ -900,14 +996,16 @@ def text_widget(parent):
 # GUI
 # --------------------------------------------------------------------------
 ALL = "All characters"
-VIEWS = ("Habits & Fixes", "Stats", "Run Autopsy")
+VIEWS = ("Habits & Fixes", "Draft Guide", "Overview", "Card Table", "Run Autopsy")
 
 
 class CoachApp(tk.Tk):
     def __init__(self, history_dir):
+        install_fonts()
         super().__init__()
+        pick_fonts(self)
         self.title("STS2 Coach")
-        self.geometry("1440x920")
+        self.geometry("1480x940")
         self.minsize(1100, 700)
         self.configure(bg=BG)
         self.history_dir = tk.StringVar(value=history_dir)
@@ -969,45 +1067,75 @@ class CoachApp(tk.Tk):
 
     # ----- layout --------------------------------------------------------
     def _build(self):
-        # Sidebar
-        self.sidebar = tk.Frame(self, bg=SIDEBAR, width=250)
+        # Brand row ---------------------------------------------------------
+        top = tk.Frame(self, bg=BG)
+        top.pack(fill="x", padx=24, pady=(18, 0))
+        mark = tk.Canvas(top, width=34, height=34, bg=BG, highlightthickness=0)
+        mark.pack(side="left")
+        rounded_rect(mark, 1, 1, 33, 33, 8, fill=ACCENT, outline="")
+        mark.create_text(17, 17, text="S2", fill=ON_ACCENT, font=disp(12))
+        tk.Label(top, text="STS2 Coach", bg=BG, fg=FG, font=disp(19)).pack(side="left", padx=(12, 0))
+        tk.Label(top, text="Slay the Spire 2 run analysis", bg=BG, fg=FAINT,
+                 font=(UI_FONT, 10)).pack(side="left", padx=(14, 0), pady=(5, 0))
+        PillButton(top, "Refresh", lambda: self.reload(force=True), primary=True).pack(side="right")
+        PillButton(top, "Change folder", self._settings).pack(side="right", padx=(0, 10))
+        tk.Label(top, textvariable=self.status, bg=BG, fg=FAINT, font=(UI_FONT, 9),
+                 justify="right", anchor="e").pack(side="right", padx=(0, 18))
+
+        # Full-width navigation ---------------------------------------------
+        nav = tk.Frame(self, bg=BG)
+        nav.pack(fill="x", padx=24, pady=(20, 0))
+        self.tab_widgets = {}
+        for v in VIEWS:
+            f = tk.Frame(nav, bg=BG, cursor="hand2")
+            f.pack(side="left", padx=(0, 30))
+            lbl = tk.Label(f, text=v, bg=BG, fg=DIM, font=(UI_FONT_SEMI, 12), cursor="hand2")
+            lbl.pack(pady=(0, 7))
+            bar = tk.Frame(f, bg=BG, height=3)
+            bar.pack(fill="x")
+            for w in (f, lbl):
+                w.bind("<Button-1>", lambda e, v=v: self.set_view(v))
+                w.bind("<Enter>", lambda e, l=lbl, v=v: l.configure(fg=FG))
+                w.bind("<Leave>", lambda e, l=lbl, v=v: l.configure(fg=FG if self.view == v else DIM))
+            self.tab_widgets[v] = (lbl, bar)
+
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill="both", expand=True, padx=24, pady=(22, 22))
+
+        # Sidebar: characters + options -------------------------------------
+        self.sidebar = tk.Frame(body, bg=SIDEBAR, width=236)
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
-        tk.Label(self.sidebar, text="STS2 Coach", bg=SIDEBAR, fg=FG,
-                 font=(UI_FONT_SEMI, 17)).pack(anchor="w", padx=22, pady=(22, 0))
-        tk.Label(self.sidebar, text="Slay the Spire 2 run analysis", bg=SIDEBAR, fg=FAINT,
-                 font=(UI_FONT, 9)).pack(anchor="w", padx=22, pady=(0, 18))
         tk.Label(self.sidebar, text="CHARACTERS", bg=SIDEBAR, fg=FAINT,
-                 font=(UI_FONT_SEMI, 8)).pack(anchor="w", padx=22, pady=(4, 6))
+                 font=(UI_FONT_SEMI, 8)).pack(anchor="w", padx=2, pady=(2, 8))
         self.char_list = tk.Frame(self.sidebar, bg=SIDEBAR)
-        self.char_list.pack(fill="x", padx=10)
+        self.char_list.pack(fill="x")
 
         bottom = tk.Frame(self.sidebar, bg=SIDEBAR)
-        bottom.pack(side="bottom", fill="x", padx=18, pady=16)
+        bottom.pack(side="bottom", fill="x", pady=(16, 0))
+        tk.Label(bottom, text="OPTIONS", bg=SIDEBAR, fg=FAINT,
+                 font=(UI_FONT_SEMI, 8)).pack(anchor="w", padx=2, pady=(0, 6))
         ttk.Checkbutton(bottom, text="Count quits as losses", variable=self.include_abandoned,
                         command=self.refresh_views).pack(anchor="w", pady=2)
         ttk.Checkbutton(bottom, text="Include co-op runs", variable=self.include_multi,
                         command=self.reload).pack(anchor="w", pady=2)
         ttk.Checkbutton(bottom, text="Auto-refresh on new runs", variable=self.auto_refresh).pack(anchor="w", pady=2)
-        self._flat_button(bottom, "Change folder...", self._settings, bg=SIDEBAR).pack(anchor="w", pady=(10, 4))
-        tk.Label(bottom, textvariable=self.status, bg=SIDEBAR, fg=FAINT, font=(UI_FONT, 8),
-                 justify="left", wraplength=210, anchor="w").pack(anchor="w", fill="x")
 
-        # Main area
-        main = tk.Frame(self, bg=BG)
-        main.pack(side="left", fill="both", expand=True)
+        # Main area ---------------------------------------------------------
+        main = tk.Frame(body, bg=BG)
+        main.pack(side="left", fill="both", expand=True, padx=(28, 0))
 
         header = tk.Frame(main, bg=BG)
-        header.pack(fill="x", padx=28, pady=(22, 8))
-        self.title_dot = tk.Label(header, text="●", bg=BG, fg=ACCENT, font=(UI_FONT, 20))
-        self.title_dot.pack(side="left")
-        self.title_lbl = tk.Label(header, text=ALL, bg=BG, fg=FG, font=(UI_FONT_SEMI, 22))
-        self.title_lbl.pack(side="left", padx=(6, 0))
+        header.pack(fill="x", pady=(0, 10))
+        self.title_dot = tk.Label(header, text="●", bg=BG, fg=ACCENT, font=(UI_FONT, 18))
+        self.title_dot.pack(side="left", pady=(4, 0))
+        self.title_lbl = tk.Label(header, text=ALL, bg=BG, fg=FG, font=disp(28))
+        self.title_lbl.pack(side="left", padx=(8, 0))
         self.subtitle_lbl = tk.Label(header, text="", bg=BG, fg=DIM, font=(UI_FONT, 10))
-        self.subtitle_lbl.pack(side="left", padx=14, pady=(8, 0))
+        self.subtitle_lbl.pack(side="left", padx=16, pady=(10, 0))
 
         fbar = tk.Frame(main, bg=BG)
-        fbar.pack(fill="x", padx=28, pady=(0, 10))
+        fbar.pack(fill="x", pady=(0, 14))
         tk.Label(fbar, text="ASCENSION", bg=BG, fg=FAINT, font=(UI_FONT_SEMI, 8)).pack(side="left", padx=(0, 8))
         self.asc_box = ttk.Combobox(fbar, textvariable=self.asc_filter, width=7, state="readonly",
                                     values=["All"], style="Filter.TCombobox")
@@ -1026,26 +1154,10 @@ class CoachApp(tk.Tk):
         self.build_lbl.pack(side="left", padx=12)
 
         self.cards_row = tk.Frame(main, bg=BG)
-        self.cards_row.pack(fill="x", padx=28, pady=(4, 14))
-
-        # Segmented tabs
-        tabs = tk.Frame(main, bg=BG)
-        tabs.pack(fill="x", padx=28)
-        self.tab_widgets = {}
-        for v in VIEWS:
-            f = tk.Frame(tabs, bg=BG, cursor="hand2")
-            f.pack(side="left", padx=(0, 26))
-            lbl = tk.Label(f, text=v, bg=BG, fg=DIM, font=(UI_FONT_SEMI, 11), cursor="hand2")
-            lbl.pack(pady=(0, 6))
-            bar = tk.Frame(f, bg=BG, height=3)
-            bar.pack(fill="x")
-            for w in (f, lbl):
-                w.bind("<Button-1>", lambda e, v=v: self.set_view(v))
-            self.tab_widgets[v] = (lbl, bar)
-        tk.Frame(main, bg=BORDER, height=1).pack(fill="x", padx=28)
+        self.cards_row.pack(fill="x", pady=(0, 22))
 
         self.content = tk.Frame(main, bg=BG)
-        self.content.pack(fill="both", expand=True, padx=28, pady=(14, 22))
+        self.content.pack(fill="both", expand=True)
 
         # View: habits
         self.habits_view = ScrollFrame(self.content)
@@ -1150,9 +1262,9 @@ class CoachApp(tk.Tk):
                     wd.bind("<Leave>", lambda e, ws=widgets: [x.configure(bg=SIDEBAR) for x in ws])
 
     def _stat_card(self, parent, value, caption, color=FG):
-        f = tk.Frame(parent, bg=CARD, padx=18, pady=12)
+        f = tk.Frame(parent, bg=CARD, padx=20, pady=14)
         f.pack(side="left", padx=(0, 12), fill="y")
-        tk.Label(f, text=value, bg=CARD, fg=color, font=(UI_FONT_SEMI, 18)).pack(anchor="w")
+        tk.Label(f, text=value, bg=CARD, fg=color, font=disp(20)).pack(anchor="w")
         tk.Label(f, text=caption, bg=CARD, fg=DIM, font=(UI_FONT, 9)).pack(anchor="w")
 
     def _render_header(self):
@@ -1209,8 +1321,12 @@ class CoachApp(tk.Tk):
             bar.configure(bg=ACCENT if on else BG)
         for w in (self.habits_view, self.stats_view, self.autopsy_view):
             w.pack_forget()
-        {"Habits & Fixes": self.habits_view, "Stats": self.stats_view,
-         "Run Autopsy": self.autopsy_view}[view].pack(fill="both", expand=True)
+        if view in self.STATS_TABS:
+            self.stats_view.pack(fill="both", expand=True)
+            self._set_stats_tab(view)
+        else:
+            {"Habits & Fixes": self.habits_view, "Run Autopsy": self.autopsy_view}[view].pack(
+                fill="both", expand=True)
 
     # ----- data ----------------------------------------------------------
     def _scan(self):
@@ -1342,12 +1458,12 @@ class CoachApp(tk.Tk):
         # Focus banner
         if habits:
             top = habits[0]
-            ban = tk.Frame(inner, bg="#2a2216", padx=22, pady=16)
+            ban = tk.Frame(inner, bg=FOCUS_BG, padx=22, pady=16)
             ban.pack(fill="x", pady=(0, 14))
-            tk.Label(ban, text="YOUR #1 FOCUS RIGHT NOW", bg="#2a2216", fg=ACCENT,
+            tk.Label(ban, text="YOUR #1 FOCUS RIGHT NOW", bg=FOCUS_BG, fg=ACCENT,
                      font=(UI_FONT_SEMI, 8)).pack(anchor="w")
-            wrap_label(ban, top["h"]["title"], 15, bg="#2a2216", weight="bold").pack(fill="x", pady=(2, 2))
-            wrap_label(ban, top["h"]["fix"][0], 10, bg="#2a2216", fg="#e9d9bf").pack(fill="x")
+            wrap_label(ban, top["h"]["title"], 17, bg=FOCUS_BG, font=disp(17)).pack(fill="x", pady=(2, 2))
+            wrap_label(ban, top["h"]["fix"][0], 10, bg=FOCUS_BG, fg=FG).pack(fill="x")
 
         wrap_label(inner, f"Run-killing habits  ·  based on {len(losses)} losses and {len(wins)} wins",
                    12, bg=BG, weight="bold").pack(fill="x", pady=(2, 2))
@@ -1370,9 +1486,9 @@ class CoachApp(tk.Tk):
             chips = tk.Frame(inner, bg=BG)
             chips.pack(fill="x")
             for j, it in enumerate(fine):
-                c = tk.Frame(chips, bg="#16261d", padx=12, pady=7)
+                c = tk.Frame(chips, bg=CARD, padx=12, pady=7)
                 c.grid(row=j // 3, column=j % 3, sticky="ew", padx=(0, 8), pady=4)
-                tk.Label(c, text="✓  " + it["h"]["title"], bg="#16261d", fg=GOOD,
+                tk.Label(c, text="✓  " + it["h"]["title"], bg=CARD, fg=GOOD,
                          font=(UI_FONT, 9), anchor="w").pack(anchor="w")
             for col in range(3):
                 chips.grid_columnconfigure(col, weight=1)
@@ -1389,8 +1505,8 @@ class CoachApp(tk.Tk):
 
         top = tk.Frame(body, bg=CARD)
         top.pack(fill="x")
-        tk.Label(top, text=f"{rank}", bg=CARD, fg=FAINT, font=(UI_FONT_SEMI, 16)).pack(side="left", padx=(0, 12))
-        tk.Label(top, text=h["title"], bg=CARD, fg=FG, font=(UI_FONT_SEMI, 13)).pack(side="left")
+        tk.Label(top, text=f"{rank}", bg=CARD, fg=FAINT, font=disp(18)).pack(side="left", padx=(0, 12))
+        tk.Label(top, text=h["title"], bg=CARD, fg=FG, font=disp(14)).pack(side="left")
         tk.Label(top, text=f" {label} ", bg=color, fg=BG, font=(UI_FONT_SEMI, 8)).pack(side="right")
 
         # frequency bars
@@ -1440,7 +1556,7 @@ class CoachApp(tk.Tk):
         for tip in h["fix"]:
             row = tk.Frame(tips, bg=CARD)
             row.pack(fill="x", pady=1)
-            tk.Label(row, text="→", bg=CARD, fg=ACCENT, font=(UI_FONT_SEMI, 10)).pack(side="left", anchor="n")
+            tk.Label(row, text="→", bg=CARD, fg=FAINT, font=(UI_FONT_SEMI, 10)).pack(side="left", anchor="n")
             wrap_label(row, tip, 10, pad=10).pack(side="left", fill="x", expand=True, padx=(8, 0))
 
         ex = sorted(it["examples"], key=lambda r: r["start"], reverse=True)[:4]
@@ -1486,8 +1602,7 @@ class CoachApp(tk.Tk):
 
         bar = tk.Frame(self.stats_view, bg=BG)
         bar.pack(fill="x", pady=(0, 12))
-        seg = tk.Frame(bar, bg=CARD)
-        seg.pack(side="left")
+        seg = tk.Frame(bar, bg=CARD)      # sub-tabs now live in the main navigation (kept for state)
         self.stats_tab_btns = {}
         for name in self.STATS_TABS:
             b = tk.Label(seg, text=name, bg=CARD, fg=DIM, font=(UI_FONT_SEMI, 9), padx=14, pady=6, cursor="hand2")
@@ -1496,14 +1611,14 @@ class CoachApp(tk.Tk):
             self.stats_tab_btns[name] = b
 
         right = tk.Frame(bar, bg=BG)
-        right.pack(side="right")
+        right.pack(side="left")
         self.stats_right = right
         self.min_val_lbl = tk.Label(right, text="", bg=BG, fg=ACCENT, font=(UI_FONT_SEMI, 10), width=3)
         self.min_val_lbl.pack(side="right")
         self.slider_var = tk.IntVar(value=8)
         self.min_scale = tk.Scale(right, from_=3, to=25, orient="horizontal", variable=self.slider_var,
                                   showvalue=False, length=150, bg=ACCENT, troughcolor=BORDER,
-                                  activebackground="#ffd08a", highlightthickness=0, borderwidth=0,
+                                  activebackground=ACCENT_HOVER, highlightthickness=0, borderwidth=0,
                                   sliderrelief="flat", sliderlength=14, width=8, cursor="hand2")
         self.min_scale.pack(side="right", padx=6)
         tk.Label(right, text="MIN PICKS", bg=BG, fg=FAINT, font=(UI_FONT_SEMI, 8)).pack(side="right", padx=(18, 0))
@@ -1546,6 +1661,7 @@ class CoachApp(tk.Tk):
         tsb.pack(side="right", fill="y")
         self.card_tree.bind("<<TreeviewSelect>>", self._on_card_select)
         self._set_stats_tab(self.stats_tab, render=False)
+        self.stats_bar = bar
 
     def _scope_key(self):
         return "all" if self.biome == "All acts" else "biome"
@@ -1554,10 +1670,16 @@ class CoachApp(tk.Tk):
         self.stats_tab = name
         for n, b in self.stats_tab_btns.items():
             b.configure(bg=CARD_HI if n == name else CARD, fg=ACCENT if n == name else DIM)
+        bar = getattr(self, "stats_bar", None)
         if name == "Overview":
             self.stats_right.pack_forget()
-        elif not self.stats_right.winfo_ismapped():
-            self.stats_right.pack(side="right")
+            if bar is not None:
+                bar.pack_forget()
+        else:
+            if bar is not None and not bar.winfo_ismapped():
+                bar.pack(fill="x", pady=(0, 14), before=bar.master.winfo_children()[1])
+            if not self.stats_right.winfo_ismapped():
+                self.stats_right.pack(side="left")
         for w in (self.guide_sf, self.overview_sf, self.table_frame):
             w.pack_forget()
         {"Draft Guide": self.guide_sf, "Overview": self.overview_sf,
@@ -1668,7 +1790,7 @@ class CoachApp(tk.Tk):
         inc = self.include_abandoned.get()
         rows, meta, base = self._guide_rows()
         tk.Label(inner, text=("Draft guide - all acts" if self.biome == "All acts" else f"Draft guide - {self.biome}"),
-                 bg=BG, fg=FG, font=(UI_FONT_SEMI, 13)).pack(anchor="w", pady=(0, 8))
+                 bg=BG, fg=FG, font=disp(16)).pack(anchor="w", pady=(0, 8))
         n = self.slider_var.get()
         rs = reward_stats(self.runs, inc, self._biome_act_ids())
 
@@ -1696,9 +1818,9 @@ class CoachApp(tk.Tk):
                    "beats skipping." if more == "more" else
                    "You take more cards in runs you lose - be pickier here and skip cards that don't fix a "
                    "real weakness.")
-            ban = tk.Frame(inner, bg="#2a2216", padx=16, pady=10)
+            ban = tk.Frame(inner, bg=FOCUS_BG, padx=16, pady=10)
             ban.pack(fill="x", pady=(0, 12))
-            wrap_label(ban, "💡 " + tip, 10, bg="#2a2216", fg="#e9d9bf").pack(fill="x")
+            wrap_label(ban, "💡 " + tip, 10, bg=FOCUS_BG, fg=FG).pack(fill="x")
 
         take = sorted([x for x in rows if x["verdict"] == "TAKE"], key=lambda x: -x["score"])
         skip = sorted([x for x in rows if x["verdict"] == "SKIP"], key=lambda x: x["score"])
@@ -1983,7 +2105,7 @@ class CoachApp(tk.Tk):
         inc = self.include_abandoned.get()
         d = card_detail(self.runs, inc, card)
         ov, n_ov = d["overall"]
-        tk.Label(b, text=card, bg=CARD, fg=FG, font=(UI_FONT_SEMI, 15)).pack(anchor="w")
+        tk.Label(b, text=card, bg=CARD, fg=FG, font=disp(17)).pack(anchor="w")
         if ov is None:
             wrap_label(b, "This card never made it into a finished deck with the current filters "
                           "(it may have been removed, or only appears in quit runs).", 10, fg=DIM).pack(fill="x", pady=(6, 0))
@@ -2092,14 +2214,14 @@ class CoachApp(tk.Tk):
             return
         if not self.killer_bar.winfo_ismapped():
             self.killer_bar.pack(fill="x", pady=(0, 10), before=self.killer_bar.master.winfo_children()[1])
-        chip = tk.Frame(self.killer_bar, bg="#2b1a1d", padx=12, pady=6)
+        chip = tk.Frame(self.killer_bar, bg=DANGER_BG, padx=12, pady=6)
         chip.pack(side="left")
-        tk.Label(chip, text="☠", bg="#2b1a1d", fg=BAD, font=(UI_FONT, 11)).pack(side="left")
-        tk.Label(chip, text=f"  Runs ended by {self.killer_filter}", bg="#2b1a1d", fg=FG,
+        tk.Label(chip, text="☠", bg=DANGER_BG, fg=BAD, font=(UI_FONT, 11)).pack(side="left")
+        tk.Label(chip, text=f"  Runs ended by {self.killer_filter}", bg=DANGER_BG, fg=FG,
                  font=(UI_FONT_SEMI, 10)).pack(side="left")
-        tk.Label(chip, text=f"   {n} run{'s' if n != 1 else ''}", bg="#2b1a1d", fg=DIM,
+        tk.Label(chip, text=f"   {n} run{'s' if n != 1 else ''}", bg=DANGER_BG, fg=DIM,
                  font=(UI_FONT, 9)).pack(side="left")
-        x = tk.Label(chip, text="   ✕ clear", bg="#2b1a1d", fg=INFO, font=(UI_FONT_SEMI, 9), cursor="hand2")
+        x = tk.Label(chip, text="   ✕ clear", bg=DANGER_BG, fg=INFO, font=(UI_FONT_SEMI, 9), cursor="hand2")
         x.pack(side="left")
         x.bind("<Button-1>", lambda e: self.clear_killer_filter())
 
@@ -2236,6 +2358,813 @@ class CoachApp(tk.Tk):
               + (f" and {', '.join(r['unused_potions'])} unused" if r["unused_potions"] else "")
               + ".\n", "bad")
         t.configure(state="disabled")
+
+
+# --------------------------------------------------------------------------
+# Embedded fonts: Host Grotesk (c) 2023 The Host Grotesk Project Authors
+# (https://github.com/Element-Type/HostGrotesk), SIL Open Font License 1.1
+# (https://openfontlicense.org). Static 400/600/800 instances, subset to Latin,
+# renamed "STS2 Host Grotesk*" so they never clash with an installed copy.
+# --------------------------------------------------------------------------
+FONT_DATA = {
+    'STS2 Host Grotesk': (
+        'AAEAAAAQAQAABAAAR0RFRgLQAsUAACxoAAAAfEdQT1Ps6uCDAAAs5AAAHpZHU1VCiPOV7gAAS3wAAAD+T1MvMmdMAngAAAGIAAAA'
+        'YFNUQVTne8soAABMfAAAAEhjbWFwtaK0YwAAA9wAAAEuZ2FzcAAAABAAACxgAAAACGdseWZ5pq3+AAAGEAAAIaRoZWFkKS1cowAA'
+        'AQwAAAA2aGhlYQcbBrQAAAFEAAAAJGhtdHgJdBbTAAAB6AAAAfRsb2NhI2Iq7AAABRQAAAD8bWF4cACJAJoAAAFoAAAAIG5hbWXk'
+        'LGSsAAAntAAABIxwb3N0/58AMgAALEAAAAAgcHJlcGgGjIUAAAUMAAAABwABAAAAAQDFZA1PjV8PPPUAAwPoAAAAAN/XrBoAAAAA'
+        '5x1sAf9a/xgDxwPIAAAABgACAAAAAAAAAAEAAAP3/sUAAAP0/1r/lgPHA+gAAAAAAAAAAAAAAAAAAAB9AAEAAAB9AEwABQBMAAQA'
+        'AQAAAAAAAAAAAAAAAAACAAEABAIuAZAABQAAAooCWAAAAEsCigJYAAABXgAyASoAAAILBQQDBAIAAgOAAAADAAAAYgAAAAAAAAAA'
+        'TE1OVADAACAiZQP3/sUAAAPRAXQAAAABAAAAAAHwArwAAAAgAAMCgAAeAqIAHwJVAEUCwQAiAq0ARQIbAD0CCwBFAt0AIgKjAEUA'
+        '6gBIAZEAGgJ2AEUCCQBFA1cARQKzAEgC+AAiAk0ARQMVACICgABFAl8AIQJLACkCegA3AsYAKAP0AC0CfQAzAoIAKAIeAC4CKwAj'
+        'AloAOAIkAB8CWgAfAi0AIAFOABUCbAAgAjkAOQDUADQAz//NAhIAOQDUAD0DgwA+AjkAPAJAACACWgA4AloAHwF9ADwB7wAeAWMA'
+        'CwIaADUCKAAkAyYAKwI2ADECTgAqAdEAJwKiAB8DiAAfAxMAIwIrACMDhAAgAjcAHAAA/1oAAP+WAAD/lgImABYCIgAVAooAMAKK'
+        'AE4CigBRAooANQKKAB0CigBHAooAOAKKAEwCigBCAooAPwEzAAAA4AAzAN4AJQDgADMA3gAlAjUAMAEUAE0B9AAbAOAANQFfADUB'
+        'zgAuAyAAKQHWABoB1gAaAeoAEgKzAFIDVwA9Ap8APgGBAEIBgQAdAYEALAGBADEBgQBbAYEARwG2ADABtgAxAQoAMwEKADQBWwA+'
+        'AMgAOQN+AE0CwwAuAOoASAKKADQCigAIAooAMgJOAEQCTgBEAk4AZgJOAEQCTgB6Ak4AbQJOAEQCTgBDAk4ARAJOAEICTgBcA1sA'
+        'OAKjAEACowBAAZAAXwAAAAIAAAADAAAAFAADAAEAAAAUAAQBGgAAADAAIAAEABAALwA5AEAAWgBgAHoAfgCjALEAtwDGANgA5gD4'
+        'IBQgGSAdICIgJiCsIZAhkiJl//8AAAAgADAAOgBBAFsAYQB7AKMAsQC3AMUA1wDlAPggEyAYIBwgIiAmIKwhkCGSImT//wAAABAA'
+        'AP/AAAD/ugAA/8r/xf+b/3AAAP9T/0LgRuBM4EbgMeAp38De697oAAAAAQAwAAAATAAAAFYAAABeAAAAAAAAAAAAXAAAAAAAAAAA'
+        'AAAAAAAAAAAAAAAAAEoAAABKAFAAZgBVAGsAeQBpAGcAXABdAFQAbgBMAFgASwBWAE0ATgBzAHEAcgBRAGgAYABXAGEAeABbAHwA'
+        'XgBqAF8AdwBwADcAdQB0AAC4Af+FsASNAAAAACcAQgB6AKgAywDhAPUBKAFCAU4BYwF+AY0BrgHEAfYCGQJcAowC1ALlAwYDGgM5'
+        'A1cDbgOEA80EAwQxBGcEnwS8BQYFJgU4BVUFcgV+BbEF0QYDBjkGcAaJBs4G7gcOByAHQAdXB3sHkQedB8AH+wgHCGwIpwi0CNkI'
+        '/gkmCTIJXgl6CbAJ8goSCkkKkQqjCvELOQs5C0QLWwtnC3MLiQucC9QL6gwGDCgMSQxYDGcMbwx7DIcMkwy0DNUNFw1ZDWoNew2P'
+        'DaINrw28Dc8N3A5CDnwOiQ7YDxEPTA9fD2wPhA+XD6oPvg/YD/MQDhA0EEUQnxC0EMkQ0gAFAB4AAAJiArwAAwAGAAkADAAPAABz'
+        'ESERJSEDBxMDAREDJxMhHgJE/gUBu9312toB4NAb0/5aArz9RDIBEu0BDgEP/e8CAv8AIAEFAAACAB8AAAKDArwABwALAABzATMB'
+        'IwMzAzc3IRcfAQJgAQJf5yjnGRkBQhkCvP1EAoX9e7JISAADAEUAAAIzArwAEwAcACUAAHMRITIWFhUUBgYHNx4CFRQGBiMnMzI2'
+        'NTQmIyM1MzI2NTQmIyNFAQFKYTAvSyoQLUsuNWVKsKZGTFBEpJ9BRkRGnAK8L1AzNkgmBAoBL00wNVczS0E6OkRHPjY0PwAAAQAi'
+        '//QCmQLIAB0AAEUiJiY1NDY2MzIWFyMmJiMiBgYVFBYWMzI2NzMGBgFxZ5ZSUpZnepcVZA9hU0ltPDxtSVNiEWMWmAxbo2xrpFt0'
+        'aUBNRH5YWH9DSkZsdAACAEUAAAKGArwACgAVAABzETMyFhYVFAYGIyczMjY2NTQmJiMjRdl8n01Nn3x/fWR1NDR1ZH0CvFWebGyc'
+        'VUxBe1VVfEMAAQA9AAAB8QK8AAsAAHMRIRUhFSEVIRUhFT0BtP6mATz+xAFaArxK7UjzSgABAEUAAAHzArwACQAAcxEhFSEVIRUh'
+        'EUUBrv6sAR/+4QK8Su9I/sUAAQAi//QCuQLIACEAAEUiJiY1NDY2MzIWFyMmJiMiBgYVFBYWMzI2NyM1IRUUBgYBgGydVVSZaXae'
+        'F2cPZVBNbz5Ac05ndwPXATBPjQxaoWltpl1yZT1HRIFZVXtDe29KI3KdUgAAAwBFAAACXgK8AAMABwALAABhETMRIREzEQM1IRUC'
+        'BFr951oQAYoCvP1EArz9RAFASUkAAAEASAAAAKICvAADAABzETMRSFoCvP1EAAEAGgAAAVsCvAALAABzNTMyNjURMxEUBiMaej0w'
+        'WmpdUEQ0AfT+DGBoAAEARQAAAkwCvAALAABzETMRATMBASMDBxFFWgE1cf7pAR5u8E8CvP65AUf+1/5tAVFR/wAAAAEARQAAAeMC'
+        'vAAFAABzETMRIRVFWgFEArz9jEgAAAEARQAAAxICvAAPAABzETMBBwEzESMRFwEjATcRRWkBFCoBEGpaIP73Rf70IQK8/ZQCAm79'
+        'RAJkCf2lAlsJ/ZwAAAEASAAAAmsCvAAJAABzETMBETMRIwERSFoBb1pa/pECvP3ZAif9RAIo/dgAAgAi//QC1gLIAA8AHwAARSIm'
+        'JjU0NjYzMhYWFRQGBicyNjY1NCYmIyIGBhUUFhYBfGecV1ecZ2ibV1ebaExyQEByTEtzPz9zDFujbGujXFyja2yjW1BDf1hYfkRE'
+        'flhYf0MAAAIARQAAAiACvAAMABUAAHMRMzIWFhUUBgYjIxERMzI2NTQmIyNF6lJrNDNqVJCOUUZGUY4CvDZdOzhdOP7fAWxHOz9E'
+        'AAADACL/9AMJAsgADwAfACsAAEUiJiY1NDY2MzIWFhUUBgYnMjY2NTQmJiMiBgYVFBYWBSImJyc3FxYWMzMVAXxnnFdXnGdom1dX'
+        'm2hMckBAckxLcz8/cwGMEhkM3TjOCgwPNQxbo2xro1xco2tso1tQQ39YWH5ERH5YWH9DRAkO9jHhCQVPAAIARQAAAlECvAAVAB4A'
+        'AHMRITIWFhUUBgcWFhcXIycuAiMjEREzMjY1NCYjI0UBFFNpMi4vMCsECFkIAxxBOre0T0lHUbQCvDddOzVZHBhXPJiQMj4d/uMB'
+        'Zks8PUcAAAEAIf/0AjMCyAAxAABFIi4CJzMeAjMyNjY1NCYnJyYmNTQ2NjMyFhYXIy4CIyIGBhUUFhcXFhYVFA4CATQ1YEwvA1gF'
+        'NFMwLUwtLTyMTF5Db0BEbEMGWQUrRCsqRiw8MoRVWStIWwwcOFc7NkMfGjktJzwLGg5hRUBaMC9dRS45HBo0KCk3ChgQYEw2TjQa'
+        'AAEAKQAAAiMCvAAHAABzESM1IRUjEfnQAfrQAnJKSv2OAAABADf/9AJDArwAEwAARSImJjURMxEUFjMyNjURMxEUBgYBPEl2Rlpf'
+        'Tk1eWkd3DDp5XQG4/kdkWlpkAbn+SF15OgABACgAAAKeArwABgAAYQEzExMzAQEu/vph2txf/voCvP2jAl39RAAAAQAtAAADxwK8'
+        'AA8AAHMDMxMjEzMTIxMzAyMDMwPsv2ChHLhkshyiYcNorhezArz9eAKI/XcCif1EAmL9ngADADMAAAJKArwAAwAHAAsAAGEBMwEh'
+        'ExcDEycTMwHk/k9mAbH96uYztMs0tGUCvP1EAXxE/sgBRkQBMgABACgAAAJaArwACQAAYREDMxMjEzMDEQEV7WbFIsVk6wEIAbT+'
+        'gQF//kz++AAAAQAuAAAB8AK8AAkAAHM1ASE1IRUBIRUuAVb+rwG6/qkBWkcCKE1H/dhNAAACACP/9AIOAfwAJgAzAABXIiYmNTQ2'
+        'MzIWFzU0JiMiBgcjPgIzMhYVFRQWFjMzFSMiJicGBicyNjY3JiYjIgYVFBbaPFIpdV8qRBZDOC5DCFoGPVw0amsJFhMHEzE+CxdR'
+        'MSw/JAIXQiFEPTcMKUUnUVUMCBZAQSYtNUYib1yVJCIITiAwJzVJLEgoBws1KCMuAAIAOP/0AjsC0AASACIAAEUiJicVIxEzETY2'
+        'MzIWFhUUBgYnMjY2NTQmJiMiBgYVFBYWAUU9XBpaWhhYREluPj5uVjFLKytLMTBLKipLDDEsUQLQ/s8kOUR2S0t1Q04uUjY2Ui4u'
+        'UjY2Ui4AAAEAH//0Af0B/AAdAABFIiYmNTQ2NjMyFhcjJiYjIgYGFRQWFjMyNjczBgYBGUdxQkJxR1p5EV0KSzIpSSwsSSkySwpd'
+        'EHoMQnVNTnRCXU4sMipRPDtSKjEtTF8AAgAf//QCIgLQABIAIgAARSImJjU0NjYzMhYXETMRIzUGBicyNjY1NCYmIyIGBhUUFhYB'
+        'FUpuPj5vST1dGVpaGFc4MUoqKkoxMEwqKkwMRHZLS3VDMSwBMf0wUSQ5Ti5SNjZSLi5RNzZSLgAAAQAg//QCAgH8ACUAAEUiJiY1'
+        'NDY2MzIWFhUUFAchNSEmJiMiBgYVFRQWFjMyNjczDgIBFkhvPz5wSUlpOQH+YgFGA1M+KkgrLEgpMkQQWQ08WwxBdE5PdUFBaj8K'
+        'Fw1CQUolSTYbO1AoLigtSioAAAIAFQAAASMC0AAMABAAAHMRNDY2MzMVIyIGFREDNSEVXhw/NDYmKhujAQ4CRzc7F00ZKv3AAaRM'
+        'TAACACD/GAIyAfwAIgAyAABFIiYmJzMWFjMyNjY1NQ4CIyImJjU0NjYzMhYXNTMRFAYGAzI2NjU0JiYjIgYGFRQWFgEwQWxJClkO'
+        'Wz0wTC0QNUkwRnJCQnJGQWMaWkN1UjJOLCxOMjFOLS1O6C1VPTI/KVE7RxsxH0R1Skt0QzooVv4uUnU/AS0uUjU2US0tUTY0Uy4A'
+        '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'
+        'ADsAAHMBMwEDIiYmNTQ2NjMyFhYVFAYGJzI2NTQmIyIGFRQWASImJjU0NjYzMhYWFRQGBicyNjU0JiMiBhUUFrQBlln+azUtSior'
+        'Si0uSCsrSS4jMzIjIzQ0Ac0tSiorSS4tSSoqSi0iNDIjIzQzArz9RAF0KU00NEwpKUw0NE0pRDMzMzMzMzMz/jwpTTM1TCkpTDUz'
+        'TSlEMzI0MzM0MjMAAAEAQAB0AmMCSAAIAABlJzchNSEnNxcBeTKR/mgBmJEy6nQzk0iTM+oAAAEAQAB0AmMCSAAIAABlJzcXByEV'
+        'IRcBKurqMpEBmP5okXTq6jOTSJMA//8AXwItARsC5gQHADsBBQAAAAAAFAD2AAEAAAAAAQAABgAAAAMAAQQJAAAAugAGAAMAAQQJ'
+        'AAEAIgDAAAMAAQQJAAIADgDiAAMAAQQJAAMAQADwAAMAAQQJAAQAIgDAAAMAAQQJAAUAGgEwAAMAAQQJAAYALgFKAAMAAQQJAAgA'
+        'GAF4AAMAAQQJAAkAIgGQAAMAAQQJAAsALAGyAAMAAQQJAAwAKAHeAAMAAQQJAA0BIgIGAAMAAQQJAA4ANgMoAAMAAQQJABAAIgDA'
+        'AAMAAQQJABEADgDiAAMAAQQJABkAFgNeAAMAAQQJAQAADAN0AAMAAQQJARYADAOAAAMAAQQJARcACgOMV2VpZ2h0AEMAbwBwAHkA'
+        'cgBpAGcAaAB0ACAAMgAwADIAMwAgAFQAaABlACAASABvAHMAdAAgAEcAcgBvAHQAZQBzAGsAIABQAHIAbwBqAGUAYwB0ACAAQQB1'
+        'AHQAaABvAHIAcwAgACgAaAB0AHQAcABzADoALwAvAGcAaQB0AGgAdQBiAC4AYwBvAG0ALwBFAGwAZQBtAGUAbgB0AC0AVAB5AHAA'
+        'ZQAvAEgAbwBzAHQARwByAG8AdABlAHMAawApAFMAVABTADIAIABIAG8AcwB0ACAARwByAG8AdABlAHMAawBSAGUAZwB1AGwAYQBy'
+        'AFMAVABTADIASABvAHMAdABHAHIAbwB0AGUAcwBrAC0AUgBlAGcAdQBsAGEAcgA7AG0AbwBkAGkAZgBpAGUAZABWAGUAcgBzAGkA'
+        'bwBuACAAMQAuADAAMAAzAFMAVABTADIASABvAHMAdABHAHIAbwB0AGUAcwBrAC0AUgBlAGcAdQBsAGEAcgBFAGwAZQBtAGUAbgB0'
+        'ACAAVAB5AHAAZQBEAG8BHwB1AGsAYQBuACAASwBhAHIAYQBwATEAbgBhAHIAaAB0AHQAcABzADoALwAvAGUAbABlAG0AZQBuAHQA'
+        'dAB5AHAAZQAuAGMAbwBoAHQAdABwAHMAOgAvAC8AZABvAHUAZwBoAGsAYQBuAC4AYwBvAG0AVABoAGkAcwAgAEYAbwBuAHQAIABT'
+        'AG8AZgB0AHcAYQByAGUAIABpAHMAIABsAGkAYwBlAG4AcwBlAGQAIAB1AG4AZABlAHIAIAB0AGgAZQAgAFMASQBMACAATwBwAGUA'
+        'bgAgAEYAbwBuAHQAIABMAGkAYwBlAG4AcwBlACwAIABWAGUAcgBzAGkAbwBuACAAMQAuADEALgAgAFQAaABpAHMAIABsAGkAYwBl'
+        'AG4AcwBlACAAaQBzACAAYQB2AGEAaQBsAGEAYgBsAGUAIAB3AGkAdABoACAAYQAgAEYAQQBRACAAYQB0ADoAIABoAHQAdABwAHMA'
+        'OgAvAC8AbwBwAGUAbgBmAG8AbgB0AGwAaQBjAGUAbgBzAGUALgBvAHIAZwBoAHQAdABwAHMAOgAvAC8AbwBwAGUAbgBmAG8AbgB0'
+        'AGwAaQBjAGUAbgBzAGUALgBvAHIAZwBIAG8AcwB0AEcAcgBvAHQAZQBzAGsAVwBlAGkAZwBoAHQASQB0AGEAbABpAGMAUgBvAG0A'
+        'YQBuAAMAAAAAAAD/nAAyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAB//8ADwABAAAADAAAAAAAAAACABIAAQABAAEAAwAFAAEABwAH'
+        'AAEACQAMAAEADgAPAAEAEQAVAAEAFwAXAAEAGQAbAAEAHQAfAAEAIQAmAAEAKAApAAEALAAvAAEAMQAxAAEAMwA1AAEANwA5AAEA'
+        'PwA/AAIAaQBpAAEAawBrAAEAAQAAAAoAJAA0AAJERkxUAA5sYXRuAA4ABAAAAAD//wABAAAAAWtlcm4ACAAAAAIAAQAAAAIABh0g'
+        'AAIACAACAAoREAABAKoABAAAAFAKbADSAQQC2gqeAU4CBALMAkYCbAKeAswCzALaAyQDzgQYBEIEgATKBOwFygYYBsIHEArqCEIH'
+        'JgdICwQHWgfICCgH2gfsCCIIKAgoCEIIQgh8CIYItAjuCQQJDgmECbYKFApOCmwKngq0CuoLBAs6DCILXAvOC/gMIgyQDOoNbA2i'
+        'DdwORg7gD2oPag9qD3QP7g/8D+4P/A/uD/wQBhCEAAIABgABAAgAAAAKACIACAAkADoAIQBLAFQAOABWAGEAQgBoAGkATgAMABb/'
+        '5QAY/+oAMP/gADL/5QA3//sAOv/7AFD/9gBR//QAVP/vAFb/0gBX/9IAW//gABIAFv/SABj/1wAw/+oAMv/qADf/9AA6/+8AS//v'
+        'AEz/7wBN//QATv/0AE//7wBQ//QAUf/xAFT/6gBW/7QAV//IAFv/vgBp//YALQAB/7kAA//gAAf/4AAK/74AD//gABH/4AAT/+8A'
+        'G//VAB3/yAAe/8gAH//IACD/7wAh/9IAJ//cACj/3AAp/8gAKv/cACv/yAAs/+EALf/XAC7/5QAv/+AAMP/IADH/wwAy/7QAM/+0'
+        'ADT/3AA1/7kANv94ADf/4QA4/9UAOf/VADr/zQA+/+8AP//vAEv/5QBM/+UATf/0AE7/9ABP/9sAUP/2AFb/qgBb/4wAaP/qAGn/'
+        '7wAQABb/3AAY/9IAMP/0ADL/4QA6/+8AS//gAEz/4ABN//QATv/0AE//4ABQ//QAUf/0AFT/5QBW/74AV//IAFv/qgAJADD/8QAy'
+        '//QAOv/xAEv/9ABM//QAT//0AFD/9ABW/+AAW//cAAwAFv/gADD/qgA3//QAOv/0AFH/6gBS/+AAU//gAFT/7wBX/+AAW//0AGj/'
+        '8QBp/9sACwAW/4wAMP+cADL/9AA3/+UAUf/SAFL/4ABT/9wAVP+0AFf/qgBo//YAaf/vAAMAMP/xADL/+wA6//sAEgAW/8gAGP/W'
+        'ADD/5QAy/9wAN//0ADr/5QBL/9wATP/cAE3/8QBO//EAT//cAFD/6gBR/+AAVP/lAFb/uQBX/74AW/++AGn/8QAqAAH/qgAD//QA'
+        'B//0AAr/oAAP//QAEf/0ABP/9AAU/+AAFv/cABf/3AAY/9sAGf/GABr/6gAb/9YAHf/cAB7/3AAf/9wAIf/SACn/3AAr/9wALf/g'
+        'AC//9gAw//YAMf/2ADL/8QAz/+oANP/vADX/qgA2/1YAN//0ADj/1gA5/9YAOv/IAEv/lgBM/5YAT/+WAFD/9ABW/3gAV//cAFv/'
+        'jABo/90Aaf/lABIAFv/IABj/1gAw/+UAMv/cADf/9AA6/+UASwAOAEz/3ABN//EATv/xAE//3ABQ/+oAUf/gAFT/5QBW/7kAV/++'
+        'AFv/vgBp//EACgAW/8gAMP/vADL/7wA6//YAUf/2AFT/9gBW//YAV//cAFv/9gBp//YADwAW/9MAGP/bADD/2wAy/9wAN//0ADr/'
+        '7wBL//YATP/2AE//8QBQ//EAVP/0AFb/4ABX/+AAW//cAGn/8QASACr/oQAw/5YAMv+RADf/yAA6/4wAS//IAEz/yABN/+oATv/q'
+        'AE//yABR//sAUv/gAFP/3ABU//YAVv+0AFv/yABo/9EAaf/qAAgAMP/0ADL/6gA6//YAS//0AEz/9ABP//QAVv/gAFv/0gA3AAH/'
+        'jAAD/8gAB//IAAr/lgAP/8gAEf/IABP/2wAY/+oAG/+bAB3/oAAe/6AAH/+gACD/4AAh/5YAI//gACT/9gAn/8gAKP/IACn/oAAq'
+        '/8gAK/+gACz/yAAt/6oALv/gAC//yAAw/8gAMf/IADL/vgAz/7QANP++ADX/jAA2/1oAN/++ADj/mwA5/5sAOv+bAD7/4AA//+AA'
+        'S/++AEz/vgBN/+AATv/gAE//vgBQ//QAUf/0AFL/3ABT/9IAVP/0AFb/cgBY/9wAWf/cAFr/3ABb/6oAaP++AGn/1gATACr/yAAw'
+        '/9IAMv/IADf/2AA6/7QAS//IAEz/yABN/+AATv/gAE//yABQ//QAUf/qAFL/4ABT/9wAVP/0AFb/lgBb/8gAaP/XAGn/2wAqAAP/'
+        'zAAH/8wAD//MABH/zAAT/9sAFv/qABv/4AAd/9cAHv/XAB//1wAg/+8AIf/gACf/9AAo//QAKf/XACr/9AAr/9cALf/lAC7/6wAv'
+        '/+AAMP+0ADH/tAAy//QAM/+0ADf/9AA4/+AAOf/gADr/9AA+/+8AP//vAFH/6gBS/9wAU//SAFT/5QBW//YAV//0AFj/3ABZ/9wA'
+        'Wv/cAFv/9ABo//QAaf/qABMAKv+0ADD/vgAy/7QAN//DADr/jABL/74ATP++AE3/3ABO/9wAT/++AFD/9ABR/+AAUv/SAFP/uQBU'
+        '/+oAVv+MAFv/tABo/6oAaf/IAAUAMP/cADL/6gA3//EAU//qAFv/9AAIADD/5QAy/9sAOv/2AFH/6gBU/9wAVv/gAFf/qgBb/9wA'
+        'BAAb//YAM//2ADj/9gA5//YAGwAb/+cAHf/qAB7/6gAf/+oAIf/lACn/6gAr/+oALf/vADD/9AAx//EAMv/0ADP/9AA4/+cAOf/n'
+        'ADr/6gBL/9wATP/cAE//3ABQ//QAUf/2AFL/9gBUABQAVv/gAFf/8QBb/8gAaP/2AGn/6gAEAFD/+wBR/+oAV//SAGn/8QAEAEv/'
+        '8QBQ//YAV//2AGn/9gANADD/5QA6//YASwAeAEwAHgBNABQATgAUAE8AFABR//EAUv/0AFP/3ABU/+oAV/++AGn/6gABAGn/9gAG'
+        'ADD/2wAy//QAUf/qAFT/4ABX/7QAaf/2AA4AMP/bADL/3AA6//sAS//0AEz/9ABP//QAUP/xAFH/3ABU/9IAVv/cAFf/oABb/9wA'
+        'aP/2AGn/+wACACQAMgBX/9IACwAw//EAMv/vADr/5QBL/9wATP/cAE//3ABW/6oAV//IAFv/yABo//QAaf/qAA4AMP/WADL/2wBL'
+        '//sATP/7AE//+wBQ/+8AUf/bAFP/9gBU/9wAVv/XAFf/lgBb/8gAaP/7AGn/9gAFADL/9ABTAA8AVv/2AFf/3ABo/+cAAgBX/9IA'
+        'W//0AB0AG//bAB3/2wAe/9sAH//bACH/1gAkAAUAKf/bACv/2wAt/+AAMv/xADP/6gA0//EAOP/bADn/2wA6/9wAS//XAEz/1wBP'
+        '/9cAUP/xAFL/9ABT//QAVv+RAFf/3ABb/9IAXf/gAF//4ABh/+AAaP/vAGn/1gAMADr/4ABL/9wATP/cAE//3ABQ//YAUv/xAFP/'
+        '8QBW/6AAV//gAFv/0gBo/+oAaf/gABcAG//lAB3/4QAe/+EAH//hACH/6gAp/+EAK//hAC3/8QAuAAUAMP/xADH/9gA4/+UAOf/l'
+        'ADr/9ABS/+oAU//qAFb/9gBX/9wAXf/2AF//9gBh//YAaP/7AGn/5QAOACr/7wAw/+kAOv/WAEv/tABM/7QAT/+0AFD/9gBS/+oA'
+        'U//qAFb/eABX/9wAW/+CAGj/2wBp/8gABwAw//YATwAKAFD/9gBX/8gAW//0AGj/+wBp//EADAAW/4wAMP+qADf/9gBR/9IAUv/g'
+        'AFP/4ABU/5YAV/+CAFz/9gBe//YAYP/2AGn/6gAFADD/4AAy//EAOv/0AFf/8QBp//EADQAW/+AAGP/qADD/9AAy/+oAN//0ADr/'
+        '9ABR//QAVP/0AFb/yABX//QAW//SAGj/9gBp//QABgAw/6oAUf/lAFP/8QBU/9wAV/+WAFv/9AANADD/3AAy/9wAS//2AEz/9gBQ'
+        '/+8AUf/IAFL/9gBT//YAVP/SAFb/0gBX/6oAW//IAGn/+wAIADD/6gAy/+oAS//vAEz/7wBP/+8AVv/SAFf/0gBb/+oAHAAD/9wA'
+        'B//cAA//3AAR/9wAE//xABT/yAAV//QAFv++ABf/yAAZ/74AG//xAB3/9AAe//QAH//0ACD/4AAkADIAKf/0ACv/9AAt//YALv/q'
+        'ADD/1wAx/9wAM//qADQACgA4//EAOf/xAD7/4AA//+AACgAD//EAB//xAA//8QAR//EAFP/qABb/4AAX/+AAGf/cACQAHgAuAAoA'
+        'CgAD//EAB//xAA//8QAR//EAFP/qABb/4AAX/+AAGf/cACQAKAAuAAoAGwAD/9wAB//cAA//3AAR/9wAE//xABT/yAAV//QAFv++'
+        'ABf/yAAZ/74AG//xAB3/9AAe//QAH//0ACD/4AAkABQAKf/0ACv/9AAt//YALv/qADD/1wAx/9wAM//qADj/8QA5//EAPv/gAD//'
+        '4AAWAAP/6gAH/+oAD//qABH/6gAT//sAFv/0ABf/9AAZ//QAG//2AB3/+wAe//sAH//7ACD/9gAp//sAK//7ADD/8QAx//YAM//0'
+        'ADj/9gA5//YAPv/2AD//9gAgAAH/uQAD//YAB//2AAr/yAAP//YAEf/2ABP/9gAU//YAFv/0ABf/9AAY/+oAGf/gABr/9gAb/+8A'
+        'Hf/qAB7/6gAf/+oAIAAUACH/4AAkABQAKf/qACv/6gAt//QALgAZADX/uQA2/6AAN//qADj/7wA5/+8AOv/0AD4AFAA/ABQADQAB'
+        '/+AAFP/gABb/3AAX/+AAGP/cABn/vgAkABQALgAKADD/9AAx//EAMv/qADX/4AA2/9IADgAB/+AAFP/cABb/0gAX/9wAGP/SABn/'
+        'uQAa/+oALf/2AC4ACgAw//QAMf/xADL/6gA1/+AANv/IABoAA//lAAf/5QAK/9IAD//lABH/5QAT//QAFP/2ABb/9AAX//QAGP/l'
+        'ABn/6gAb/9wAHf/bAB7/2wAf/9sAIf++ACQADwAp/9sAK//bAC3/wwAuABQANv9kADf/4AA4/9wAOf/cADr/4AAmAAH/ggAD/80A'
+        'B//NAAr/vgAP/80AEf/NABP/3AAY//YAGv/0ABv/lgAd/6AAHv+gAB//oAAg/+oAIf+MACT/9gAn/9IAKP/SACn/oAAq/9IAK/+g'
+        'ACz/3AAt/5EALv/IAC//3AAw/9wAMf/gADL/3AAz/9wANP/IADX/ggA2/24AN//IADj/lgA5/5YAOv+gAD7/6gA//+oAIgAD/80A'
+        'B//NAA//zQAR/80AE//SABT/tAAV/+AAFv94ABf/mwAY/+oAGf+CABr/9AAb/9IAHf/cAB7/3AAf/9wAIP/gACH/9AAkAB4AKf/c'
+        'ACv/3AAt/+AALv++AC//9AAw/5EAMf+gADL/9gA0//QAN//qADj/0gA5/9IAOv/2AD7/4AA//+AAAgAW/9wAGP/cAB4AA/++AAf/'
+        'vgAP/74AEf++ABP/3AAU/8gAFf/SABb/qgAX/8gAGP/0ABn/tAAa//QAG//cAB3/3AAe/9wAH//cACD/3AAkACgAKf/cACv/3AAt'
+        '/9IALv/gAC//6gAw/9IAMf/SADf/9AA4/9wAOf/cAD7/3AA//9wAAwAw/+AAMv/2ADr/6gACAAH/9gA1//YAHwAB/+oAA//2AAf/'
+        '9gAK//YAD//2ABH/9gAT//YAFP/NABb/xAAX/84AGP/lABn/pgAb//YAHf/2AB7/9gAf//YAIf/2ACn/9gAr//YALf/2AC4ACgAw'
+        '/+8AMf/sADL/5QAz/+8ANP/2ADX/6gA2/9wAN//0ADj/9gA5//YAIAAD//EAB//xAA//8QAR//EAE//7ABT/0gAW/8gAF//gABj/'
+        '9AAZ/74AGv/vABv/9AAd//EAHv/xAB//8QAh//YAJAAKACf/9gAo//YAKf/xACr/9gAr//EALf/xAC8ACgAw//QAMf/2ADL/6gAz'
+        '/+oANv/0ADf/9AA4//QAOf/0AAIJ/gAEAAAKYgs2ACkAHwAAAAAAAP/2AAAAAAAA//YAAAAA/9wAAAAAAAD/4v/bAAAAAAAAAAD/'
+        '9AAA/9IAAP/xAAAAAAAAAAAAAAAAAAD/8QAA/+D/1gAAAAD/9gAA/77/3P/x/9EAAP/v/+D/yP/b/+UAAP/7/+oAAAAAAAD/rwAA'
+        '/9wAAAAA/80AAP/q//T/9AAAAAAAAP/7AAAAAP/b//YAAAAA//H/4AAAAAD/9AAA//EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+        'AP/2AAAAAAAAAAAAAAAA/9YAAAAAAAD/9v/gAAAAAAAAAAD/+f/2/9IAAAAAAAAAAAAAAAAAAAAAAAD/7//W/+8AAP/qAAD/8QAA'
+        '/4z/pv/0/6oAAP/n/77/qgAA/+oAAP/WAAAAAAAA//QAAAAA/6r/tP+0AAAAAP/2AAD/8f/vAAAAAAAAAAAAAP/qAAAAAAAA//H/'
+        '9AAAAAD/8QAAAAD/9gAAAAAAAP/IAAAAAAAAAAAAAAAA//sAAAAAAAAAAAAAAAAAAAAA/8gAAAAAAAAAAP/bAAAAAAAAAAr/7wAA'
+        '/9z/9AAAAAAAAP/qAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/9AAAAAAAAAAAAAAA'
+        'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/xAAAAAAAA//sAAAAAAAD/8QAAAAAAAP/0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+        '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'
+        'AAAAABYAAAAWAAAAFgAcAB0AHAAdABsAGwACAAgAAQAIAAEALgAEAAAAEgBQAHYAhACEAIoAmACyALwAxgDcAQoBIAEuAS4BLgEu'
+        'ATQBNAACAAUASwBPAAAAUQBUAAUAVgBXAAkAWwBbAAsAYgBnAAwACQBR/+AAVP/gAFf/3ABi/+AAY//2AGT/4ABl//YAZv/gAGf/'
+        '4AADAFH/4ABU/+AAV//cAAEAV//qAAMAUf/gAFT/6gBX/+AABgBL/8gATP/SAE//0gBW/6oAV//0AFv/oAACAFb/4ABX/+AAAgBW'
+        '/9IAV//SAAUAS//gAE//6gBW/4IAV//0AFv/vgALAEv/3ABM/9wATf/qAE7/6gBP/+AAUf/gAFL/4ABT/9IAVP/0AFb/UABb/1oA'
+        'BQBR/+AAUv/gAFP/0gBU/4IAV/9QAAMAUf/gAFT/yABX/1oAAQBL/+oAAQBL//QAAAABAAAACgAmAEAAAkRGTFQADmxhdG4ADgAE'
+        'AAAAAP//AAIAAAABAAJjYWx0AA5saWdhABQAAAABAAAAAAABAAIAAwAIAHwAlgAGAAAABAAOACIAOABOAAMAAQBcAAEAeAABAFwA'
+        'AQAAAAEAAwACAEIASAABAGQAAQBCAAEAAAABAAMAAQAyAAEATgACACwAMgABAAAAAQADAAIAFgAcAAEAOAABABwAAQAAAAEAAQAB'
+        'AEoAAgABAEAASQAAAAEAAAABAAgAAgAKAAIAcABwAAEAAgAYADIABAAIAAEACAABABoAAQAIAAIABgAMAD4AAgAjAD8AAgAmAAEA'
+        'AQAgAAAAAQABAAgAAgAAABQAAgAAACQAAndnaHQBAAAAaXRhbAEWAAEABAAUAAMAAAACAAIBkAAAArwAAAADAAEAAgEXAAAAAAAB'
+        'AAA='
+    ),
+    'STS2 Host Grotesk SemiBold': (
+        'AAEAAAAQAQAABAAAR0RFRgLQAsUAACy8AAAAfEdQT1Ps6uCDAAAtOAAAHpZHU1VCiPOV7gAAS9AAAAD+T1MvMmdMAngAAAGIAAAA'
+        'YFNUQVTlg8wyAABM0AAAAERjbWFwtaK0YwAAA9wAAAEuZ2FzcAAAABAAACy0AAAACGdseWYugtWdAAAGEAAAIZJoZWFkKTNcqAAA'
+        'AQwAAAA2aGhlYQchBq4AAAFEAAAAJGhtdHgJdBHmAAAB6AAAAfRsb2NhIe4pcgAABRQAAAD8bWF4cACJAJoAAAFoAAAAIG5hbWWJ'
+        'qkjIAAAnpAAABO5wb3N0/58AMgAALJQAAAAgcHJlcGgGjIUAAAUMAAAABwABAAAAAQDFthlAn18PPPUAAwPoAAAAAN/XrBoAAAAA'
+        '5x1sAf9R/xgD1gPNAAAABgACAAAAAAAAAAEAAAP3/sUAAAP0/1H/kAPWA+gAAAAAAAAAAAAAAAAAAAB9AAEAAAB9AEwABQBMAAQA'
+        'AQAAAAAAAAAAAAAAAAACAAEABAIuAZAABQAAAooCWAAAAEsCigJYAAABXgAyASoAAAILBQQDBAIAAgOAAAADAAAAYgAAAAAAAAAA'
+        'TE1OVADAACAiZQP3/sUAAAPRAXQAAAABAAAAAAHwArwAAAAgAAMCgAAeAqIADgJVADgCwQAfAq0AOAIbADUCCwA4At0AHwKjADgA'
+        '6gA5AZEAEQJ2ADgCCQA4A1cAOAKzADkC+AAfAk0AOAMVAB8CgAA4Al8AGwJLABwCegArAsYAGQP0AB4CfQAaAoIAGQIeACYCKwAh'
+        'AloALQIkABgCWgAYAi0AGQFOAAwCbAAeAjkALADUAC4Az//DAhIALADUAC4DgwAuAjkALQJAABkCWgAtAloAGAF9AC0B7wATAWMA'
+        'BgIaACUCKAAVAyYAFwI2ABoCTgAaAdEAHgKiAA4DiAAOAxMAIQIrACEDhAAYAjcAFQAA/1EAAP+QAAD/kAImAA4CIgAMAooAKAKK'
+        'AEcCigBLAooALgKKAB8CigA/AooALwKKAD0CigA3AooANgEzAAAA4AAkAN4AFwDgACQA3gAXAjUAIwEUAD0B9AAVAOAAKQFfACoB'
+        'zgAsAyAAHAHWAAwB1gAMAeoAEgKzAE0DVwAyAp8AMQGBADEBgQAVAYEAIwGBACgBgQBGAYEAOAG2AB4BtgAeAQoAJQEKACcBWwAr'
+        'AMgALwN+ADgCwwApAOoAOQKKADACigAEAooAMgJOAEQCTgBEAk4AXQJOAEQCTgB5Ak4AaAJOAEQCTgBDAk4ARAJOAC0CTgBUA1sA'
+        'IgKjADYCowA2AZAAWAAAAAIAAAADAAAAFAADAAEAAAAUAAQBGgAAADAAIAAEABAALwA5AEAAWgBgAHoAfgCjALEAtwDGANgA5gD4'
+        'IBQgGSAdICIgJiCsIZAhkiJl//8AAAAgADAAOgBBAFsAYQB7AKMAsQC3AMUA1wDlAPggEyAYIBwgIiAmIKwhkCGSImT//wAAABAA'
+        'AP/AAAD/ugAA/8r/xf+b/3AAAP9T/0LgRuBM4EbgMeAp38De697oAAAAAQAwAAAATAAAAFYAAABeAAAAAAAAAAAAXAAAAAAAAAAA'
+        'AAAAAAAAAAAAAAAAAEoAAABKAFAAZgBVAGsAeQBpAGcAXABdAFQAbgBMAFgASwBWAE0ATgBzAHEAcgBRAGgAYABXAGEAeABbAHwA'
+        'XgBqAF8AdwBwADcAdQB0AAC4Af+FsASNAAAAACcAQgB6AKgAywDhAPUBKAFCAU4BYwF9AYwBqwHBAfMCFgJaAooC0gLjAwQDGAM3'
+        'A1UDawOBA8oEAAQuBGQEnAS5BQMFIwU1BVIFbgV6Ba0FzQX/BjUGbAaFBsoG6QcJBxsHOgdRB3UHigeWB7gH8wf/CGQInwisCNEI'
+        '9gkeCSoJVglyCagJ6goKCkEKiQqbCukLMQsxCzwLUwtfC2sLgQuUC8wL4gv+DB4MQAxPDF4MZgxyDH4MigyrDMwNDg1QDWENcg2G'
+        'DZoNpw20DccN1A46DnQOgQ7QDwgPQw9WD2MPew+OD6EPtQ/PD+oQBRArEDwQlhCrEMAQyQAFAB4AAAJiArwAAwAGAAkADAAPAABz'
+        'ESERJSEDBxMDAREDJxMhHgJE/gUBu9312toB4NAb0/5aArz9RDIBEu0BDgEP/e8CAv8AIAEFAAACAA4AAAKUArwABwALAABzATMB'
+        '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'
+        'FhYVFAYGJzI2NTQmIyIGFRQWASImJjU0NjYzMhYWFRQGBicyNjU0JiMiBhUUFqsBjHX+dFQwTC4uTTAvTSwsTTAfKysfHiwrAeMw'
+        'TC4uTS8xTC0uTDEgKyogHiwrArz9RAFoKk82OE8qKk84Nk8qVC8sLy8vLywv/jgqTzc2TyoqTzY3TypULy0uLi4uLS8AAAEANgBo'
+        'Am0CVAAIAABlJzchNSEnNxcBdj6F/nkBh4U+92hAiFyIQPYAAAEANgBoAm0CVAAIAABlJzcXByEVIRcBLff3PoUBh/55hWj29kCI'
+        'XIgA//8AWAIsAScC7AQHADsBBwAAAAAAAAAWAQ4AAQAAAAABAAAGAAAAAQAAAAABEAAIAAYAAwABBAkAAAC6AA4AAwABBAkAAQA0'
+        'AMgAAwABBAkAAgAOAPwAAwABBAkAAwBQAQoAAwABBAkABAA0AMgAAwABBAkABQAaAVoAAwABBAkABgA+AXQAAwABBAkACAAYAbIA'
+        'AwABBAkACQAiAcoAAwABBAkACwAsAewAAwABBAkADAAoAhgAAwABBAkADQEiAkAAAwABBAkADgA2A2IAAwABBAkAEAA0AMgAAwAB'
+        'BAkAEQAOAPwAAwABBAkAGQAWA5gAAwABBAkBAAAMA64AAwABBAkBEAAQA7oAAwABBAkBFgAMA8oAAwABBAkBFwAKA9ZXZWlnaHRT'
+        'ZW1pQm9sZABDAG8AcAB5AHIAaQBnAGgAdAAgADIAMAAyADMAIABUAGgAZQAgAEgAbwBzAHQAIABHAHIAbwB0AGUAcwBrACAAUABy'
+        'AG8AagBlAGMAdAAgAEEAdQB0AGgAbwByAHMAIAAoAGgAdAB0AHAAcwA6AC8ALwBnAGkAdABoAHUAYgAuAGMAbwBtAC8ARQBsAGUA'
+        'bQBlAG4AdAAtAFQAeQBwAGUALwBIAG8AcwB0AEcAcgBvAHQAZQBzAGsAKQBTAFQAUwAyACAASABvAHMAdAAgAEcAcgBvAHQAZQBz'
+        'AGsAIABTAGUAbQBpAEIAbwBsAGQAUgBlAGcAdQBsAGEAcgBTAFQAUwAyAEgAbwBzAHQARwByAG8AdABlAHMAawBTAGUAbQBpAEIA'
+        'bwBsAGQALQBSAGUAZwB1AGwAYQByADsAbQBvAGQAaQBmAGkAZQBkAFYAZQByAHMAaQBvAG4AIAAxAC4AMAAwADMAUwBUAFMAMgBI'
+        'AG8AcwB0AEcAcgBvAHQAZQBzAGsAUwBlAG0AaQBCAG8AbABkAC0AUgBlAGcAdQBsAGEAcgBFAGwAZQBtAGUAbgB0ACAAVAB5AHAA'
+        'ZQBEAG8BHwB1AGsAYQBuACAASwBhAHIAYQBwATEAbgBhAHIAaAB0AHQAcABzADoALwAvAGUAbABlAG0AZQBuAHQAdAB5AHAAZQAu'
+        'AGMAbwBoAHQAdABwAHMAOgAvAC8AZABvAHUAZwBoAGsAYQBuAC4AYwBvAG0AVABoAGkAcwAgAEYAbwBuAHQAIABTAG8AZgB0AHcA'
+        'YQByAGUAIABpAHMAIABsAGkAYwBlAG4AcwBlAGQAIAB1AG4AZABlAHIAIAB0AGgAZQAgAFMASQBMACAATwBwAGUAbgAgAEYAbwBu'
+        'AHQAIABMAGkAYwBlAG4AcwBlACwAIABWAGUAcgBzAGkAbwBuACAAMQAuADEALgAgAFQAaABpAHMAIABsAGkAYwBlAG4AcwBlACAA'
+        'aQBzACAAYQB2AGEAaQBsAGEAYgBsAGUAIAB3AGkAdABoACAAYQAgAEYAQQBRACAAYQB0ADoAIABoAHQAdABwAHMAOgAvAC8AbwBw'
+        'AGUAbgBmAG8AbgB0AGwAaQBjAGUAbgBzAGUALgBvAHIAZwBoAHQAdABwAHMAOgAvAC8AbwBwAGUAbgBmAG8AbgB0AGwAaQBjAGUA'
+        'bgBzAGUALgBvAHIAZwBIAG8AcwB0AEcAcgBvAHQAZQBzAGsAVwBlAGkAZwBoAHQAUwBlAG0AaQBCAG8AbABkAEkAdABhAGwAaQBj'
+        'AFIAbwBtAGEAbgAAAAMAAAAAAAD/nAAyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAB//8ADwABAAAADAAAAAAAAAACABIAAQABAAEA'
+        'AwAFAAEABwAHAAEACQAMAAEADgAPAAEAEQAVAAEAFwAXAAEAGQAbAAEAHQAfAAEAIQAmAAEAKAApAAEALAAvAAEAMQAxAAEAMwA1'
+        'AAEANwA5AAEAPwA/AAIAaQBpAAEAawBrAAEAAQAAAAoAJAA0AAJERkxUAA5sYXRuAA4ABAAAAAD//wABAAAAAWtlcm4ACAAAAAIA'
+        'AQAAAAIABh0gAAIACAACAAoREAABAKoABAAAAFAKbADSAQQC2gqeAU4CBALMAkYCbAKeAswCzALaAyQDzgQYBEIEgATKBOwFygYY'
+        'BsIHEArqCEIHJgdICwQHWgfICCgH2gfsCCIIKAgoCEIIQgh8CIYItAjuCQQJDgmECbYKFApOCmwKngq0CuoLBAs6DCILXAvOC/gM'
+        'IgyQDOoNbA2iDdwORg7gD2oPag9qD3QP7g/8D+4P/A/uD/wQBhCEAAIABgABAAgAAAAKACIACAAkADoAIQBLAFQAOABWAGEAQgBo'
+        'AGkATgAMABb/5QAY/+oAMP/gADL/5QA3//sAOv/7AFD/9gBR//QAVP/vAFb/0gBX/9IAW//gABIAFv/SABj/1wAw/+oAMv/qADf/'
+        '9AA6/+8AS//vAEz/7wBN//QATv/0AE//7wBQ//QAUf/xAFT/6gBW/7QAV//IAFv/vgBp//YALQAB/7kAA//gAAf/4AAK/74AD//g'
+        'ABH/4AAT/+8AG//VAB3/yAAe/8gAH//IACD/7wAh/9IAJ//cACj/3AAp/8gAKv/cACv/yAAs/+EALf/XAC7/5QAv/+AAMP/IADH/'
+        'wwAy/7QAM/+0ADT/3AA1/7kANv94ADf/4QA4/9UAOf/VADr/zQA+/+8AP//vAEv/5QBM/+UATf/0AE7/9ABP/9sAUP/2AFb/qgBb'
+        '/4wAaP/qAGn/7wAQABb/3AAY/9IAMP/0ADL/4QA6/+8AS//gAEz/4ABN//QATv/0AE//4ABQ//QAUf/0AFT/5QBW/74AV//IAFv/'
+        'qgAJADD/8QAy//QAOv/xAEv/9ABM//QAT//0AFD/9ABW/+AAW//cAAwAFv/gADD/qgA3//QAOv/0AFH/6gBS/+AAU//gAFT/7wBX'
+        '/+AAW//0AGj/8QBp/9sACwAW/4wAMP+cADL/9AA3/+UAUf/SAFL/4ABT/9wAVP+0AFf/qgBo//YAaf/vAAMAMP/xADL/+wA6//sA'
+        'EgAW/8gAGP/WADD/5QAy/9wAN//0ADr/5QBL/9wATP/cAE3/8QBO//EAT//cAFD/6gBR/+AAVP/lAFb/uQBX/74AW/++AGn/8QAq'
+        'AAH/qgAD//QAB//0AAr/oAAP//QAEf/0ABP/9AAU/+AAFv/cABf/3AAY/9sAGf/GABr/6gAb/9YAHf/cAB7/3AAf/9wAIf/SACn/'
+        '3AAr/9wALf/gAC//9gAw//YAMf/2ADL/8QAz/+oANP/vADX/qgA2/1YAN//0ADj/1gA5/9YAOv/IAEv/lgBM/5YAT/+WAFD/9ABW'
+        '/3gAV//cAFv/jABo/90Aaf/lABIAFv/IABj/1gAw/+UAMv/cADf/9AA6/+UASwAOAEz/3ABN//EATv/xAE//3ABQ/+oAUf/gAFT/'
+        '5QBW/7kAV/++AFv/vgBp//EACgAW/8gAMP/vADL/7wA6//YAUf/2AFT/9gBW//YAV//cAFv/9gBp//YADwAW/9MAGP/bADD/2wAy'
+        '/9wAN//0ADr/7wBL//YATP/2AE//8QBQ//EAVP/0AFb/4ABX/+AAW//cAGn/8QASACr/oQAw/5YAMv+RADf/yAA6/4wAS//IAEz/'
+        'yABN/+oATv/qAE//yABR//sAUv/gAFP/3ABU//YAVv+0AFv/yABo/9EAaf/qAAgAMP/0ADL/6gA6//YAS//0AEz/9ABP//QAVv/g'
+        'AFv/0gA3AAH/jAAD/8gAB//IAAr/lgAP/8gAEf/IABP/2wAY/+oAG/+bAB3/oAAe/6AAH/+gACD/4AAh/5YAI//gACT/9gAn/8gA'
+        'KP/IACn/oAAq/8gAK/+gACz/yAAt/6oALv/gAC//yAAw/8gAMf/IADL/vgAz/7QANP++ADX/jAA2/1oAN/++ADj/mwA5/5sAOv+b'
+        'AD7/4AA//+AAS/++AEz/vgBN/+AATv/gAE//vgBQ//QAUf/0AFL/3ABT/9IAVP/0AFb/cgBY/9wAWf/cAFr/3ABb/6oAaP++AGn/'
+        '1gATACr/yAAw/9IAMv/IADf/2AA6/7QAS//IAEz/yABN/+AATv/gAE//yABQ//QAUf/qAFL/4ABT/9wAVP/0AFb/lgBb/8gAaP/X'
+        'AGn/2wAqAAP/zAAH/8wAD//MABH/zAAT/9sAFv/qABv/4AAd/9cAHv/XAB//1wAg/+8AIf/gACf/9AAo//QAKf/XACr/9AAr/9cA'
+        'Lf/lAC7/6wAv/+AAMP+0ADH/tAAy//QAM/+0ADf/9AA4/+AAOf/gADr/9AA+/+8AP//vAFH/6gBS/9wAU//SAFT/5QBW//YAV//0'
+        'AFj/3ABZ/9wAWv/cAFv/9ABo//QAaf/qABMAKv+0ADD/vgAy/7QAN//DADr/jABL/74ATP++AE3/3ABO/9wAT/++AFD/9ABR/+AA'
+        'Uv/SAFP/uQBU/+oAVv+MAFv/tABo/6oAaf/IAAUAMP/cADL/6gA3//EAU//qAFv/9AAIADD/5QAy/9sAOv/2AFH/6gBU/9wAVv/g'
+        'AFf/qgBb/9wABAAb//YAM//2ADj/9gA5//YAGwAb/+cAHf/qAB7/6gAf/+oAIf/lACn/6gAr/+oALf/vADD/9AAx//EAMv/0ADP/'
+        '9AA4/+cAOf/nADr/6gBL/9wATP/cAE//3ABQ//QAUf/2AFL/9gBUABQAVv/gAFf/8QBb/8gAaP/2AGn/6gAEAFD/+wBR/+oAV//S'
+        'AGn/8QAEAEv/8QBQ//YAV//2AGn/9gANADD/5QA6//YASwAeAEwAHgBNABQATgAUAE8AFABR//EAUv/0AFP/3ABU/+oAV/++AGn/'
+        '6gABAGn/9gAGADD/2wAy//QAUf/qAFT/4ABX/7QAaf/2AA4AMP/bADL/3AA6//sAS//0AEz/9ABP//QAUP/xAFH/3ABU/9IAVv/c'
+        'AFf/oABb/9wAaP/2AGn/+wACACQAMgBX/9IACwAw//EAMv/vADr/5QBL/9wATP/cAE//3ABW/6oAV//IAFv/yABo//QAaf/qAA4A'
+        'MP/WADL/2wBL//sATP/7AE//+wBQ/+8AUf/bAFP/9gBU/9wAVv/XAFf/lgBb/8gAaP/7AGn/9gAFADL/9ABTAA8AVv/2AFf/3ABo'
+        '/+cAAgBX/9IAW//0AB0AG//bAB3/2wAe/9sAH//bACH/1gAkAAUAKf/bACv/2wAt/+AAMv/xADP/6gA0//EAOP/bADn/2wA6/9wA'
+        'S//XAEz/1wBP/9cAUP/xAFL/9ABT//QAVv+RAFf/3ABb/9IAXf/gAF//4ABh/+AAaP/vAGn/1gAMADr/4ABL/9wATP/cAE//3ABQ'
+        '//YAUv/xAFP/8QBW/6AAV//gAFv/0gBo/+oAaf/gABcAG//lAB3/4QAe/+EAH//hACH/6gAp/+EAK//hAC3/8QAuAAUAMP/xADH/'
+        '9gA4/+UAOf/lADr/9ABS/+oAU//qAFb/9gBX/9wAXf/2AF//9gBh//YAaP/7AGn/5QAOACr/7wAw/+kAOv/WAEv/tABM/7QAT/+0'
+        'AFD/9gBS/+oAU//qAFb/eABX/9wAW/+CAGj/2wBp/8gABwAw//YATwAKAFD/9gBX/8gAW//0AGj/+wBp//EADAAW/4wAMP+qADf/'
+        '9gBR/9IAUv/gAFP/4ABU/5YAV/+CAFz/9gBe//YAYP/2AGn/6gAFADD/4AAy//EAOv/0AFf/8QBp//EADQAW/+AAGP/qADD/9AAy'
+        '/+oAN//0ADr/9ABR//QAVP/0AFb/yABX//QAW//SAGj/9gBp//QABgAw/6oAUf/lAFP/8QBU/9wAV/+WAFv/9AANADD/3AAy/9wA'
+        'S//2AEz/9gBQ/+8AUf/IAFL/9gBT//YAVP/SAFb/0gBX/6oAW//IAGn/+wAIADD/6gAy/+oAS//vAEz/7wBP/+8AVv/SAFf/0gBb'
+        '/+oAHAAD/9wAB//cAA//3AAR/9wAE//xABT/yAAV//QAFv++ABf/yAAZ/74AG//xAB3/9AAe//QAH//0ACD/4AAkADIAKf/0ACv/'
+        '9AAt//YALv/qADD/1wAx/9wAM//qADQACgA4//EAOf/xAD7/4AA//+AACgAD//EAB//xAA//8QAR//EAFP/qABb/4AAX/+AAGf/c'
+        'ACQAHgAuAAoACgAD//EAB//xAA//8QAR//EAFP/qABb/4AAX/+AAGf/cACQAKAAuAAoAGwAD/9wAB//cAA//3AAR/9wAE//xABT/'
+        'yAAV//QAFv++ABf/yAAZ/74AG//xAB3/9AAe//QAH//0ACD/4AAkABQAKf/0ACv/9AAt//YALv/qADD/1wAx/9wAM//qADj/8QA5'
+        '//EAPv/gAD//4AAWAAP/6gAH/+oAD//qABH/6gAT//sAFv/0ABf/9AAZ//QAG//2AB3/+wAe//sAH//7ACD/9gAp//sAK//7ADD/'
+        '8QAx//YAM//0ADj/9gA5//YAPv/2AD//9gAgAAH/uQAD//YAB//2AAr/yAAP//YAEf/2ABP/9gAU//YAFv/0ABf/9AAY/+oAGf/g'
+        'ABr/9gAb/+8AHf/qAB7/6gAf/+oAIAAUACH/4AAkABQAKf/qACv/6gAt//QALgAZADX/uQA2/6AAN//qADj/7wA5/+8AOv/0AD4A'
+        'FAA/ABQADQAB/+AAFP/gABb/3AAX/+AAGP/cABn/vgAkABQALgAKADD/9AAx//EAMv/qADX/4AA2/9IADgAB/+AAFP/cABb/0gAX'
+        '/9wAGP/SABn/uQAa/+oALf/2AC4ACgAw//QAMf/xADL/6gA1/+AANv/IABoAA//lAAf/5QAK/9IAD//lABH/5QAT//QAFP/2ABb/'
+        '9AAX//QAGP/lABn/6gAb/9wAHf/bAB7/2wAf/9sAIf++ACQADwAp/9sAK//bAC3/wwAuABQANv9kADf/4AA4/9wAOf/cADr/4AAm'
+        'AAH/ggAD/80AB//NAAr/vgAP/80AEf/NABP/3AAY//YAGv/0ABv/lgAd/6AAHv+gAB//oAAg/+oAIf+MACT/9gAn/9IAKP/SACn/'
+        'oAAq/9IAK/+gACz/3AAt/5EALv/IAC//3AAw/9wAMf/gADL/3AAz/9wANP/IADX/ggA2/24AN//IADj/lgA5/5YAOv+gAD7/6gA/'
+        '/+oAIgAD/80AB//NAA//zQAR/80AE//SABT/tAAV/+AAFv94ABf/mwAY/+oAGf+CABr/9AAb/9IAHf/cAB7/3AAf/9wAIP/gACH/'
+        '9AAkAB4AKf/cACv/3AAt/+AALv++AC//9AAw/5EAMf+gADL/9gA0//QAN//qADj/0gA5/9IAOv/2AD7/4AA//+AAAgAW/9wAGP/c'
+        'AB4AA/++AAf/vgAP/74AEf++ABP/3AAU/8gAFf/SABb/qgAX/8gAGP/0ABn/tAAa//QAG//cAB3/3AAe/9wAH//cACD/3AAkACgA'
+        'Kf/cACv/3AAt/9IALv/gAC//6gAw/9IAMf/SADf/9AA4/9wAOf/cAD7/3AA//9wAAwAw/+AAMv/2ADr/6gACAAH/9gA1//YAHwAB'
+        '/+oAA//2AAf/9gAK//YAD//2ABH/9gAT//YAFP/NABb/xAAX/84AGP/lABn/pgAb//YAHf/2AB7/9gAf//YAIf/2ACn/9gAr//YA'
+        'Lf/2AC4ACgAw/+8AMf/sADL/5QAz/+8ANP/2ADX/6gA2/9wAN//0ADj/9gA5//YAIAAD//EAB//xAA//8QAR//EAE//7ABT/0gAW'
+        '/8gAF//gABj/9AAZ/74AGv/vABv/9AAd//EAHv/xAB//8QAh//YAJAAKACf/9gAo//YAKf/xACr/9gAr//EALf/xAC8ACgAw//QA'
+        'Mf/2ADL/6gAz/+oANv/0ADf/9AA4//QAOf/0AAIJ/gAEAAAKYgs2ACkAHwAAAAAAAP/2AAAAAAAA//YAAAAA/9wAAAAAAAD/4v/b'
+        'AAAAAAAAAAD/9AAA/9IAAP/xAAAAAAAAAAAAAAAAAAD/8QAA/+D/1gAAAAD/9gAA/77/3P/x/9EAAP/v/+D/yP/b/+UAAP/7/+oA'
+        'AAAAAAD/rwAA/9wAAAAA/80AAP/q//T/9AAAAAAAAP/7AAAAAP/b//YAAAAA//H/4AAAAAD/9AAA//EAAAAAAAAAAAAAAAAAAAAA'
+        'AAAAAAAAAAAAAP/2AAAAAAAAAAAAAAAA/9YAAAAAAAD/9v/gAAAAAAAAAAD/+f/2/9IAAAAAAAAAAAAAAAAAAAAAAAD/7//W/+8A'
+        'AP/qAAD/8QAA/4z/pv/0/6oAAP/n/77/qgAA/+oAAP/WAAAAAAAA//QAAAAA/6r/tP+0AAAAAP/2AAD/8f/vAAAAAAAAAAAAAP/q'
+        'AAAAAAAA//H/9AAAAAD/8QAAAAD/9gAAAAAAAP/IAAAAAAAAAAAAAAAA//sAAAAAAAAAAAAAAAAAAAAA/8gAAAAAAAAAAP/bAAAA'
+        'AAAAAAr/7wAA/9z/9AAAAAAAAP/qAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/9AAA'
+        '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'
+        'DwAAAAoAFQAEABkAAAADAAMAAAAAAAAAAAAYABgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+        'AAAAFwAXABcAAAAAABYAAAAWAAAAFgAcAB0AHAAdABsAGwACAAgAAQAIAAEALgAEAAAAEgBQAHYAhACEAIoAmACyALwAxgDcAQoB'
+        'IAEuAS4BLgEuATQBNAACAAUASwBPAAAAUQBUAAUAVgBXAAkAWwBbAAsAYgBnAAwACQBR/+AAVP/gAFf/3ABi/+AAY//2AGT/4ABl'
+        '//YAZv/gAGf/4AADAFH/4ABU/+AAV//cAAEAV//qAAMAUf/gAFT/6gBX/+AABgBL/8gATP/SAE//0gBW/6oAV//0AFv/oAACAFb/'
+        '4ABX/+AAAgBW/9IAV//SAAUAS//gAE//6gBW/4IAV//0AFv/vgALAEv/3ABM/9wATf/qAE7/6gBP/+AAUf/gAFL/4ABT/9IAVP/0'
+        'AFb/UABb/1oABQBR/+AAUv/gAFP/0gBU/4IAV/9QAAMAUf/gAFT/yABX/1oAAQBL/+oAAQBL//QAAAABAAAACgAmAEAAAkRGTFQA'
+        'DmxhdG4ADgAEAAAAAP//AAIAAAABAAJjYWx0AA5saWdhABQAAAABAAAAAAABAAIAAwAIAHwAlgAGAAAABAAOACIAOABOAAMAAQBc'
+        'AAEAeAABAFwAAQAAAAEAAwACAEIASAABAGQAAQBCAAEAAAABAAMAAQAyAAEATgACACwAMgABAAAAAQADAAIAFgAcAAEAOAABABwA'
+        'AQAAAAEAAQABAEoAAgABAEAASQAAAAEAAAABAAgAAgAKAAIAcABwAAEAAgAYADIABAAIAAEACAABABoAAQAIAAIABgAMAD4AAgAj'
+        'AD8AAgAmAAEAAQAgAAAAAQABAAgAAgAAABQAAgAAACQAAndnaHQBAAAAaXRhbAEWAAEABAAQAAEAAAAAARACWAAAAAMAAQACARcA'
+        'AAAAAAEAAA=='
+    ),
+    'STS2 Host Grotesk ExtraBold': (
+        'AAEAAAAQAQAABAAAR0RFRgLQAsUAACy8AAAAfEdQT1Ps6uCDAAAtOAAAHpZHU1VCiPOV7gAAS9AAAAD+T1MvMmdMAngAAAGIAAAA'
+        'YFNUQVTmS8w2AABM0AAAAERjbWFwtaK0YwAAA9wAAAEuZ2FzcAAAABAAACy0AAAACGdseWZ4IAYuAAAGEAAAIYpoZWFkKTZcrAAA'
+        'AQwAAAA2aGhlYQckBqoAAAFEAAAAJGhtdHgJcw6SAAAB6AAAAfRsb2NhIRUolgAABRQAAAD8bWF4cACJAJoAAAFoAAAAIG5hbWU/'
+        '7WgjAAAnnAAABPdwb3N0/58AMgAALJQAAAAgcHJlcGgGjIUAAAUMAAAABwABAAAAAQDFtnCpJl8PPPUAAwPoAAAAAN/XrBoAAAAA'
+        '5x1sAf9K/xgD4APRAAAABgACAAAAAAAAAAEAAAP3/sUAAAP0/0r/jAPgA+gAAAAAAAAAAAAAAAAAAAB9AAEAAAB9AEwABQBMAAQA'
+        'AQAAAAAAAAAAAAAAAAACAAEABAIuAZAABQAAAooCWAAAAEsCigJYAAABXgAyASoAAAILBQQDBAIAAgOAAAADAAAAYgAAAAAAAAAA'
+        'TE1OVADAACAiZQP3/sUAAAPRAXQAAAABAAAAAAHwArwAAAAgAAMCgAAeAqIAAgJVAC8CwQAcAq0ALwIbAC8CCwAvAt0AHAKjAC8A'
+        '6gAvAZEADAJ2AC8CCQAvA1cALwKzAC8C+AAcAk0ALwMVABwCgAAvAl8AGAJLABQCegAjAsYADwP0ABQCfQAKAoIADgIeACACKwAf'
+        'AloAJgIkABMCWgATAi0AFQFOAAYCbAAdAjkAJADUACQAz/+8AhIAJADUACQDgwAkAjkAJAJAABUCWgAmAloAEwF9ACQB7wAMAWMA'
+        'AwIaABoCKAAKAyYACgI2AAsCTgAQAdEAGAKiAAIDiAACAxMAHwIrAB8DhAATAjcAEQAA/0oAAP+MAAD/jAIlAAkCIgAGAooAIgKK'
+        'AEMCigBGAooAKgKKACACigA5AooAKQKKADMCigAwAooAMAEzAAAA4AAaAN4ADQDgABoA3gANAjUAGgEUADMB9AAQAOAAIQFfACMB'
+        'zgArAyAAEwHWAAMB1gADAeoAEgKzAEkDVwArAp8AKAGBACYBgQAQAYEAHAGBACEBgQA5AYEALgG2ABIBtgASAQoAHAEKAB8BWwAe'
+        'AMgAKAN+ACkCwwAlAOoALwKKAC4CigACAooAMgJOAEQCTgBEAk4AWAJOAEQCTgB4Ak4AZAJOAEQCTgBEAk4ARAJOAB8CTgBOA1sA'
+        'FAKjADACowAwAZAAUgAAAAIAAAADAAAAFAADAAEAAAAUAAQBGgAAADAAIAAEABAALwA5AEAAWgBgAHoAfgCjALEAtwDGANgA5gD4'
+        'IBQgGSAdICIgJiCsIZAhkiJl//8AAAAgADAAOgBBAFsAYQB7AKMAsQC3AMUA1wDlAPggEyAYIBwgIiAmIKwhkCGSImT//wAAABAA'
+        'AP/AAAD/ugAA/8r/xf+b/3AAAP9T/0LgRuBM4EbgMeAp38De697oAAAAAQAwAAAATAAAAFYAAABeAAAAAAAAAAAAXAAAAAAAAAAA'
+        'AAAAAAAAAAAAAAAAAEoAAABKAFAAZgBVAGsAeQBpAGcAXABdAFQAbgBMAFgASwBWAE0ATgBzAHEAcgBRAGgAYABXAGEAeABbAHwA'
+        'XgBqAF8AdwBwADcAdQB0AAC4Af+FsASNAAAAACcAQgB6AKgAywDhAPQBJgFAAUwBYQF7AYoBqQG/AfECFAJYAogC0ALhAwIDFQM0'
+        'A1IDZwN9A8YD/AQqBGAEmAS1BP8FHwUxBU4FagV2BakFyQX7BjEGaAaBBsYG5QcFBxcHNwdOB3IHhgeSB7QH7wf7CGAImwioCM0I'
+        '8gkaCSYJUgluCaQJ5goGCj0KhQqXCuULLQstCzgLTwtbC2cLfQuQC8gL3gv6DBoMPAxLDFoMYgxuDHoMhgynDMgNCg1MDV0Nbg2C'
+        'DZYNow2wDcMN0A42DnAOfQ7MDwQPPw9SD18Pdw+KD50PsQ/LD+YQARAnEDgQkhCnELwQxQAFAB4AAAJiArwAAwAGAAkADAAPAABz'
+        'ESERJSEDBxMDAREDJxMhHgJE/gUBu9312toB4NAb0/5aArz9RDIBEu0BDgEP/e8CAv8AIAEFAAACAAIAAAKgArwABwALAABzEzMB'
+        'IwMzAyc3IRcC/58BAJTYOdgdJQFoJQK8/UQCcP2QnW1tAAADAC8AAAJDArwAEwAcACUAAHMRITIWFhUUBgYHNx4CFRQGBiMnMzI2'
+        'NTQmIyM1MzI2NTQmIyMvASNJZDQuSy0QMEsrNmdKoYs1Ojw1iYAzNjU1fwK8LVE2NUgmBAsBME4uOFcwcjAuLTRoLysqLwAAAQAc'
+        '//QCqALIAB0AAEUiJiY1NDY2MzIWFyMmJiMiBgYVFBYWMzI2NzMGBgFxaplSUplqgKQTmgxRQj5YLy9YPkJQDJoTowxbo2trpFyA'
+        'dDg9OWpJSWk5OTVvfQACAC8AAAKMArwACgAVAABzETMyFhYVFAYGIyczMjY2NTQmJiMjL/Z7n01Nn3tqYlVhKiphVWICvFedamme'
+        'V3g3Z0hIaDcAAQAvAAAB/gK8AAsAAHMRIRUhFSEVIRUhFS8Bz/69ASX+2wFDArxxsW28cQABAC8AAAH6ArwACQAAcxEhFSEVMxUj'
+        'ES8By/7B//8CvHG1bv7YAAEAHP/0AsgCyAAhAABFIiYmNTQ2NjMyFhcjJiYjIgYGFRQWFjMyNjUjNSEVFAYGAYZzolVVnm19oxic'
+        'EE4+Q14xM2JIU2C+AUxUkQxZoWtspl13aS0yOmtKSWg3W1FoPXCXTAADAC8AAAJ0ArwAAwAHAAsAAGERMxEhETMRAzUhFQHojP27'
+        'jBIBVgK8/UQCvP1EAS1xcQAAAQAvAAAAuwK8AAMAAHMRMxEvjAK8/UQAAQAMAAABawK8AAsAAHM1MzI2NREzERQGIwyEKySMdmV9'
+        'MysB4f4fanEAAQAvAAACaQK8AAsAAHMRMxETMwEBIwMHFS+M+qz+/wEJq8JBArz+7wER/uv+WQE7RvUAAAEALwAAAe0CvAAFAABz'
+        'ETMRIRUvjAEyArz9sW0AAAEALwAAAygCvAAPAABzETMTBxMzESMRFwMjAzcRL6jzO/KnjC/ncOgvArz9tggCUv1EAlAj/dMCLSP9'
+        'sAAAAQAvAAAChAK8AAkAAHMRMwERMxEjAREvjAE9jIz+wwK8/iUB2/1EAdn+JwACABz/9ALcAsgADwAfAABFIiYmNTQ2NjMyFhYV'
+        'FAYGJzI2NjU0JiYjIgYGFRQWFgF8aJ9ZWZ9oaZ5ZWZ5oQF00NF1AQF40NF4MXKNra6NcXKNra6NcfjlqSUlqOTlqSUlqOQAAAgAv'
+        'AAACNQK8AAwAFQAAcxEhMhYWFRQGBiMjEREzMjY1NCYjIy8BC1VvNzVvV392Pjg4PnYCvDljPjljPf73AXo4MDE3AAMAHP/0AxYC'
+        'yAAPAB8AKwAARSImJjU0NjYzMhYWFRQGBicyNjY1NCYmIyIGBhUUFhYFIiYnAzcXFhYzMxUBfGifWVmfaGmeWVmeaEBdNDRdQEBe'
+        'NDReAYEZGA39XdoKDBI0DFyja2ujXFyja2ujXH45aklJajk5aklJajlyCg8BG0r1CgZ5AAACAC8AAAJfArwAFQAeAABzESEyFhYV'
+        'FAYHFhYXFyMnLgIjIxERMzI2NTQmIyMvASlVbzcqIyYpAgiJCwIXMCmelD44OD6UArw5Yz4wUR0aUjWjoyMtFv73AXo4MDE3AAAB'
+        'ABj/9AI5AsgAMQAARSIuAiczHgIzMjY2NTQmJycmJjU0NjYzMhYWFyMuAiMiBgYVFBYXFxYWFRQOAgE1MGBRNgaACTNEICU5ISA3'
+        'cVliQnBER3FHB4IHKDYbGTknKTJoWWgtS1wMGztfQzM3FhgqGh0uChURa0lCXTIwZVAtLxIQJiIcLAkTEF1cNFA3HQABABQAAAI3'
+        'ArwABwAAcxEjNSEVIxHgzAIjywJLcXH9tQAAAQAj//QCVwK8ABMAAEUiJiY1ETMRFBYzMjY1ETMRFAYGATpOfkuMS0NDS4xNggw+'
+        'fl8Brf5STE1NTAGu/lNffj4AAQAPAAACtwK8AAYAAGEDMxMTMwMBDf6Vv8CU/gK8/dMCLf1EAAABABQAAAPgArwADwAAcwMzEyMT'
+        'MxMjEzMDIwMzA8u3lYkmopqeJomXvKeQGJQCvP2QAnD9jwJx/UQCJP3cAAMACgAAAnMCvAADAAcACwAAYQEzASETFwMTJxMzAdH+'
+        'OaIBx/2a81GlzlCknwK8/UQBh2z+5QE4bAEYAAEADgAAAnQCvAAJAABzNQMzEyMTMwMV++2fqCWnne30Acj+oAFg/jj0AAEAIAAA'
+        'Af4CvAAJAABzNQEhNSEVASEVIAE8/sYB2/7CAT9rAd10a/4jdAAAAgAf//QCIAH8ACYAMwAAVyImJjU0NjMyFhc1NCYjIgYHIz4C'
+        'MzIWFRUUFhYzMxUjIiYnBgYnMjY2NyYmIyIGFRQW0TdQK29aKz0TOSweMAeDBjteOXCBCRQQBB82SBEaUhQdKRwHFDUbHywmDChE'
+        'KU1VDAYYMSwYIDVKJ2liZyYlCnUbJyIsahktHAYLHx0YHwACACb/9AJHAtAAEgAiAABFIiYnFSMRMxE2NjMyFhYVFAYGJzI2NjU0'
+        'JiYjIgYGFRQWFgFUN1EajIwYTT1FbkBAbmYnPSIiPScnPCIiPAwoJEAC0P7cIDBEdktKdkN6JD4nKD8kJD4oKD4kAAABABP/9AIQ'
+        'AfwAHQAARSImJjU0NjYzMhYXIyYmIyIGBhUUFhYzMjY3MwYGARlNdkNDdk1ghBOUCTYlITYfHzYhJTYJlBKFDEN1TEx1Q2VZICYi'
+        'PiwrQCIlIlZoAAIAE//0AjQC0AASACIAAEUiJiY1NDY2MzIWFxEzESM1BgYnMjY2NTQmJiMiBgYVFBYWAQdFb0BAb0U3URmMjBdN'
+        'HSc8IiI8JyY9IiI9DER3Skt1QygkASD9MEQgMHokPycoPiQkPSgoPyQAAAEAFf/0AhYB/AAlAABFIiYmNTQ2NjMyFhYVFBQHITUh'
+        'JiYjIgYGFRUUFhYzMjY3Mw4CARpNdkJBdk5KckAC/mUBDwM9LSI5IR83JCMwDY8OQ2EMQXNLTXhEQG9HChkNVCw1Hj0vHSY5Hx8Z'
+        'ME0tAAACAAYAAAEyAtAADAAQAABzETQ2NjMzFSMiBhURAzUhFUkhSz4/IyMXzwEsAipJRxZ3FiH93gF7dXUAAgAd/xgCRwH8ACIA'
+        'MgAARSImJiczFhYzMjY2NTUOAiMiJiY1NDY2MzIWFzUzERQGBgMyNjY1NCYmIyIGBhUUFhYBOz91UgiLCEcxIzwkDy4/KUdxQUFx'
+        'RzdVGYxKelApPCIiPCkoPSIiPegpWkgmLB07LjwXJhdDdEhIc0MsIUH+L1d1OwFgJDwlJjwjIzsmJT0kAAEAJAAAAhUC0AATAABz'
+        'ETMRNjYzMhYVESMRNCYjIgYVESSMGFU3XWSLMDUzQgLQ/tcnLndw/usBCD1BRz//AAACACQAAACwAsEAAwAHAABzETMRAzUzFSSM'
+        'hoIB8P4QAj+CggAC/7z/JACrAsEADAAQAABHNTMyNjURMxEUBgYjEzUzFUQxIBKMJEg2F4LcdxEdAif900BFGgMbgoIAAwAkAAAC'
+        'IALQAAMABwALAAB3JxMzAREzETMnNwGpRPSj/iiMxbtUARKHUAEZ/hAC0P0w81P+ugABACQAAACwAtAAAwAAcxEzESSMAtD9MAAB'
+        'ACQAAANfAfwAIgAAcxEzFTY2MzIWFzY2MzIWFREjETQmIyIGFREjETQmIyIGFREkjBhNMjhRGBxaN2Nniy4yMTuLMDIwOwHwOyEm'
+        'LCooLndw/usBCD1BRz//AAEIPUFHP/8AAAABACQAAAIVAfwAEwAAcxEzFTY2MzIWFREjETQmIyIGFREkjBhTOF5kjDE1MkEB8Ekn'
+        'Lndw/usBCD1BRz//AAAAAgAV//QCKwH8AA8AHwAARSImJjU0NjYzMhYWFRQGBicyNjY1NCYmIyIGBhUUFhYBIEt5R0d6Skt5R0d5'
+        'SyI4ISI3ISI4IiE4DEJ2TE11QkJ1TUx2QnkfPi4uPh8fPS8uPh8AAAIAJv8kAkcB/AASACIAAFcRMxU2NjMyFhYVFAYGIyImJxET'
+        'MjY2NTQmJiMiBgYVFBYWJowYTT1FbkBAbkU3URqBJz0iIj0nJzwiIjzcAsxEIDBEdktKdkMoJP7kAUokPicoPyQkPigoPiQAAAIA'
+        'E/8kAjQB/AASACIAAEURBgYjIiYmNTQ2NjMyFhc1MxEBMjY2NTQmJiMiBgYVFBYWAagXTT1Fb0BAb0U3URmM/vMnPCIiPCcmPSIi'
+        'PdwBICAwRHdKS3VDKCRA/TQBSiQ/Jyg+JCQ9KCg/JAAAAQAkAAABYwH1AA4AAHMRMxU2NjMzFSMiBgYVFSSMFDwmPUslLhUB8Esl'
+        'K3wmSzbSAAABAAz/9AHSAfwALwAAVyImJzMWFjMyNjU0JicmJicuAjU0NjMyFhcjJiYjIgYVFBceAhceAxUUBgb4ZIAIjwc2JSkr'
+        'ICcOMQ8qRShkYWJxB4cDMB8mJj4JISMKHjktGjJhDF5MHSMdFREVBAIIAwglPSxDXFZMGxwaEx8LAQUFAgQTIDQmMkwqAAABAAMA'
+        'AAFeAngAFQAAcyImJjU1IzUzNTMVMxUjFRQWFjMzFfc0RyRVVYx6egobFzsYRUHddYiIdcwXGAl3AAEAGv/0AfYB8AATAABXIiY1'
+        'ETMRFBYzMjY1ETMRIzUGBtJWYosuLjI3jIwWSwx3cAEV/vg9QUc/AQD+EEcmLQABAAoAAAIeAfAABgAAcwMzExMzA7+1k3h3krUB'
+        '8P6UAWz+EAABAAoAAAMcAfAADwAAcwMzEycTMxMHEzMDIwMzA5ySimIicZtyI2KLkpF6J3kB8P5fAQGg/mABAaH+EAGs/lQAAQAL'
+        'AAACKwHwAAsAAHM3JzMXNzMHFyMnBwu3t5d6eZa3t5Z5evj4qKj4+KioAAEAEP8kAksB8AATAABXNTMyNjY3NwcDMxMTMwEOAyMc'
+        'bA8UEgonBtiYhImW/vkQGBkiGtxuBxYYVjwCD/6uAVL9pSQtFwkAAAEAGAAAAbQB8AAJAABzNRMjNSEVAyEVGPf0AZT7AQBwAQx0'
+        'cP70dP//AAIAAAKgA9EGJgABAAAABwA9AVEAAAACAAIAAANrArwADgASAABzASEVIRUzFSMVIRUhEQEnNyEVAgF1AfT+9uzsAQr+'
+        'av7FCDoBTAK8b7NrwG8CUv2uhWtrAAMAH//0AvcCyAAPABMAIwAARSImJjU0NjYzMhYWFRQGBiUBMwE3MjY2NTQmJiMiBgYVFBYW'
+        'AX9on1lZn2hpnllZnv44AlSD/azdQF00NF1AQF40NF4MXKNra6NcXKNra6NcDAK8/URyOWpJSWo5OWpJSWo5AP//AB//9AIgAwUG'
+        'JgAbAAAABwA8ARAAAAADABP/9ANrAfwAMwA/AEcAAFciJiY1NDYzMzU0JiMiBgcjPgIzMhYXNjYzMhYWFRQGByEeAjMyNjczDgIj'
+        'IiYnBgYnMjY2NzUjIgYVFBYlMyYmIyIGBtlAWC5nbYQ2JiI1BogFPmQ+O1seIFozSXFBAQL+kwMgMx4nMwyMDUNjPkFrIh5fNyAw'
+        'IQZrKy0tAS7gBDwsGzEhDClFKURZCS8rIR81UCwjICAjQHBIChgOIjEbKB00UjE0Lis3bB0yHgchGRsfyC80FiwAAwAR//QCJgH8'
+        'AA8AEwAjAABFIiYmNTQ2NjMyFhYVFAYGJQEzATcyNjY1NCYmIyIGBhUUFhYBG0d0RER0SEhzRER0/q4Bq2r+Vp8iOCIiNyIhOSIi'
+        'OAxCdkxNdUJCdU1MdkIMAfD+EGAiRDIzQyIiQzMyRCIAAAH/SgIrACcC8QADAABDJzMXO3uDWgIrxsYAAv+MAiAAdAMFAAsAFwAA'
+        'USImNTQ2MzIWFRQGJzI2NTQmIyIGFRQWL0VFLzBERDAUGhoUExsbAiA+NTU9PTU1PkMaFhYZGRYWGgAC/4wC7AB0A9EACwAXAABR'
+        'IiY1NDYzMhYVFAYnMjY1NCYjIgYVFBYvRUUvMEREMBQaGhQTGxsC7D41NT09NTU+QxoWFhkZFhYaAAIACQAAAgEC0AAWABoAAHMR'
+        'IzUzNTQ2NjMzFSMiBhUVIREjESMREzUzFUxDQyFLPj8jIxcBGIyMfK0Be3U6SUcWdxYhMv4QAXv+hQI0nJz//wAGAAAB/gLQBCYA'
+        'IAAAAAcAJgFOAAAAAgAi//QCaALIAA8AGwAARSImJjU0NjYzMhYWFRQGBicyNjU0JiMiBhUUFgFFW4NFRYNbXIJFRYJcUEdHUE9I'
+        'SAxao21to1pao21to1p+d3V1d3d1dXcAAAIAQwAAAl8CvAAKAA4AAGURIzU3NjY1NTMRBTUhFQENsYcTF4z+qgIcMwHJZgoCFBMn'
+        '/XczcnIAAQBGAAACTALIACQAAHM1NDY2Nzc2NjU0JiYjIgYGFSM+AjMyFhYVFAYHBw4CFSEVRjFgRRY/TBgxJiY4HYcCSHdHTms4'
+        'XW8oLTUWAXM4V25IHgodOS4ZLBwfNCFPaDM3XjpGdzUTFSkqGnIAAQAq//QCVALIAC4AAEUiJiYnMxQWFjMyNjU0JiYjIzUzMjY1'
+        'NCYjIgYHIz4CMzIWFhUUBgcWFhUUBgYBRU1/TQKJI0ItQEUoSDA6OjtTQDU6QQOJA0N1TFJxOksyQVA/eAwyZk8gNB46KyIuGHMr'
+        'LSYrOCdDXzMzVjM9UA4LWkQ6YDoAAgAgAAACUwK8AAoAEAAAYTUhNQEzETMVIxUnERcBJyEBev6mAUqPWlp6Iv7sFwE/fHAB0P46'
+        'eny3AaoK/mo1AAEAOf/0Al0CvAAjAABFIiYmJzMWFjMyNjY1NCYjIgYHIxMhFSEHJzY2MzIWFhUUBgYBUFV6QwWICU0yKz8iS0Er'
+        'ShB/PQGo/sAoDBdUQ1FvOUV5DDdfPSg0Ij0nOEckHQGNe8knGihEbT5Kc0EAAgAp//QCWgLIACAAMAAARSIuAjU0NjYzMhYWFyMm'
+        'JiMiBhcnPgIzMhYWFRQGBicyNjY1NCYmIyIGBhUUFhYBVVRzRh9GhF1PazwFggo+MlFUCQ0POU0tQG5EQnZUKjwgITwrKz8hIj8M'
+        'O2J5PnasXjpdNiwulZczHi8cOGZGQGxBeBszIyQzGxsyIyQzHAAAAQAzAAACTgK8AAYAAHMBITUhFQGSASz+dQIb/tQCRHhi/aYA'
+        'AwAw//QCWgLIAB0AKQA1AABFIiYmNTQ2NjcmJjU0NjYzMhYWFRQGBx4CFRQGBicyNjU0JiMiBhUUFhMyNjU0JiMiBhUUFgFFTn1K'
+        'HzgmMDk5c1VWcjk5MCY4H0p9TkZHR0ZGR0dGPT09PT09PQw0Xj8qRzUOFU4xMVU1NVUxMU4VDjVHKj9eNHQ1NDU1NTU0NQE5LS0u'
+        'Li4uLS0AAgAw//QCYQLIACAAMAAARSImJiczFhYzMjYnFw4CIyImJjU0NjYzMh4CFRQGBgMyNjY1NCYmIyIGBhUUFhYBOk5sOwaC'
+        'Cj8xUVQJDQ85TC5AbkRCdk1Uc0YfRoRZLD4hIj8sKjwgIT0MOl41Ky+VlzMdMBw4ZkZAbEE7Ynk+da1eAXkbMiMkNBsbMiQkMxsA'
+        'AQAaAAAAxgCgAAMAAHM1MxUarKCgAAEADf9QAMgAmQANAABXNTMyNjU1IzUzFRQGIw0sFBRNtElGsGYVFhiguD1UAP//ABoAAADG'
+        'AfAGJgBLAAAABwBLAAABUP//AA3/UADIAfAEJwBL//8BUAIGAEwAAAADABoAAAIbAKAAAwAHAAsAAGE1MxUhNTMVMzUzFQGLkP3/'
+        'kCmQoKCgoKCgAAIAMwAAAN8CvAADAAcAAHcDMwMHNTMVTQ+WEJGs2wHh/h/boKAAAgAQAAAB3wLIACEAJQAAdzU0NjY3Nz4CNTQm'
+        'IyIGFSM0NjYzMhYWFRQGBwcGBhUVBzUzFYsJGxszDSsiNCwuNIU2aEpEaDtHN0gPDY2s2yYdJBkNGQcbMCUqMzQrPF83MV5CQmcc'
+        'JAcMEBDboKAAAAEAIQD0AL8BlQALAAB3IiY1NDYzMhYVFAZwIywsIyMsLPQvISMuLiMhLwAAAQAjAMIBOwHZAA8AAHciJiY1NDY2'
+        'MzIWFhUUBgauJkAlJUAmKD8mJj/CJT8nKD8lJT8oJz8lAAABACsBbgGjAtwAEQAAUyc3IzUzJzcXNxcHMxUjFwcnpU44ZGQ4TkJB'
+        'TjhlZThOQQFuNFReVDRhYTRUXlQ0YQAABAATAAADDQLYAAMABwALAA8AAHMTMwMzEzMDJTUhFQE1IRWBm3+clpx+m/3/AsH9eALB'
+        'Atj9KALY/SipeHgBEXl5AAABAAP/jAHTAw0AAwAAVwEzAQMBSIj+t3QDgfx/AAABAAP/jAHTAw0AAwAARQEzAQFM/reIAUh0A4H8'
+        'f///ABIBJAHYAZgEBgBvzgAAAQBJAOcCaQFcAAMAAHc1IRVJAiDndXUAAQArAOcDKwFcAAMAAHc1IRUrAwDndXUAAQAo/1MCcv/Z'
+        'AAMAAFc1IRUoAkqthoYAAQAm/28BcQMrABMAAFcuAjU0NjY3Mw4DFRQeAhflOFYxMVY4jBxCPScnPUIckTmUsGFir5U4IV14klZW'
+        'knhdIQAAAQAQ/28BWwMrABMAAFc+AzU0LgInMx4CFRQGBgcQHEI9Jyc9QhyMOFYxMVY4kSFdeJJWVpJ4XSE4la9iYbCUOQAAAQAc'
+        '/00BYAMsAC8AAEUiJjU0NjY1NCYnNTY2NTQmJjU0NjMzFSMiBhUUFhYVFAYHFRYWFRQGBhUUFjMzFQEfUmQQEC8+Pi8QEGRSQScl'
+        'Ig8QNkBANhAPIiUns1dTIjg5ISMwB28HMSIiODkhU1dxISQZNDslNUoMAwxKNSQ8MxokIXEAAQAh/00BZQMsAC8AAFc1MzI2NTQm'
+        'JjU0Njc1JiY1NDY2NTQmIyM1MzIWFRQGBhUUFhcVBgYVFBYWFRQGIyEnJSIPEDZAQDYQDyIlJ0FSZBAQLz4+LxAQZFKzcSEkGjM8'
+        'JDVKDAMMSjUlOzQZJCFxV1MhOTgiIjEHbwcwIyE5OCJTVwAAAQA5/1EBUwMrAAcAAFcRIRUjETMVOQEal5evA9px/QlyAAEALv9R'
+        'AUgDKwAHAABXNTMRIzUhES6XlwEar3IC93H8JgACABIBwAGjArwAAwAHAABTNzMHITczB9xpXjX+pGhfNQHA/Pz8/AAAAgASAcEB'
+        'pAK9AAMABwAAUzczByE3MwfcNpJo/tY2kmgBwfz8/PwAAAEAHAHAAOMCvAADAABTNzMHHGhfNQHA/PwAAQAfAcAA5wK8AAMAAFM3'
+        'MwcfNpJoAcD8/AACAB4CHwE9AvMAAwAHAABTJzMHMyczByoMdwxKDHYLAh/U1NTUAAEAKAIfAKAC8wADAABTJzMHNQ14DAIf1NQA'
+        'AgAp/yIDUwKKAD8ASwAARSIuAjU1ND4CMzMyFhYVFRQGIyImJwYGIyImJjU0NjYzMhYXNzMRFBYzMjY1NTQmJiMjIgYGFRUUFhYz'
+        'MxUDMjY1NCYjIgYVFBYBikyBYDQ3YYRMb2WZVVpKKEAKDkdBP1owMVs9KD4SAnIQDxcUOGRCb0JpPTpnQvDDMTk3MS49O942YYJM'
+        'wkV1VzBPjVx0bXMnIh8vN2JCQmI2GxYq/wAXHS88dDxbMzdfPcJEbD53ATlCNzVDQzU3QgAAAgAl//oCrAK8AAcAJQAAYQE1IRUh'
+        'NwEFIiYmNTQ2MzMVIyIGFRQWFjMyPgM3Mw4EAhj+UQGo/rIyAbf+dkpyQYNvJRM6RBw3KjJPOigWA3kEJ0NccAJSanch/ZoGOGZE'
+        'ZXBcQDUjMxsrRVNQHzR1b1o1AAABAC//nAC7AtAAAwAAVxEzES+MZAM0/MwAAAIALv+pAk8DGAAxADUAAEUiLgInMx4CMzI2NjU0'
+        'JicnJiY1NDY2MzIWFhcjLgIjIgYGFRQWFxcWFhUUDgIHETMRAUswYFE2BnwJNUUhKDwjIDd5WWJCb0VHcUcHfgcpOBwbPCopMnBZ'
+        'aC1LXFdCDBs7X0M3PBcaLx0dLgoVEGxJQl0yMGVQMTMUESsmHC0IEw9eXDRQNx1LA2/8kQAAAwAC//QCfgLIABsAHwAjAABFIiYm'
+        'NTQ2NjMyFhcjJiYjIgYVFBYzMjY3MwYGJTUhFSU1IRUBe1uDRUWDW2WHF5AKOy5SSUlSLjsKkBeH/iIBiv52AYoMWqNtbaNabWAn'
+        'KHd1dXcoJ2Bt8U9PlU9PAAIAMgAAAlACyAAjACcAAHM1PgI1NC4CNTQ2NjMyFhYXIyYmIyIGFRQeAhUUBgchFQE1IRVAGjIgEhcS'
+        'PG1JTWU1A4ACNDIxPhIWEigkAWz94gGgUBg2QywaNTg8IUNgNDtjPSw8NDQYNTg5GyxWI28BJ19fAAACAEQAdAIKAkgAAwAHAAB3'
+        'ETMRJTUhFex2/uIBxnQB1P4ssHR0AAEARAEkAgoBmAADAABTNSEVRAHGASR0dAAAAgBYAI8B9gItAAMABwAAdycBFwMBNwGrUwFL'
+        'U1j+wFIBQI9TAUtT/rsBQFL+wAAAAgBEAMACCgH8AAMABwAAUzUhFQU1IRVEAcb+OgHGAYh0dMh0dAABAHgAZgHqAlYABwAAdzUl'
+        'FSU1BRV4ATv+xQFyZpCMSIyQvHgAAAEAZABmAdYCVgAHAABlJTUlFQU1BQHW/o4Bcv7FATtmvHi8kIxIjAACAEQAPgIKAlYABwAL'
+        'AAB3NSUVJTUFFQE1IRVJAX7+ggHB/joBxtdzZzVnc4pr/t10dAAAAgBEAD4CCgJWAAcACwAAZSU1JRUFNQUBNSEVAgX+PwHB/oIB'
+        'fv4/AcbXimuKc2c1Z/70dHQAAwBEAD4CCgJIAAMABwALAABTNSEVATUhFSURMxFEAcb+OgHG/uJ2AVN0dP7rdHSVAXX+iwAAAQAf'
+        'AN8CLwGdABcAAHc2NjMyHgIzMjY3MwYGIyIuAiMiBgcfEVxDIDEqJxYaIgRoEF1EHzAqKBYaIgXfZFoUGhQhIWRaFBoUIiAAAAEA'
+        'TgHFAgACvAAGAABTNzMXIycHTp14nXpfXwHF9/ekpAAFABT/9ANHAsgAAwATAB8ALwA7AABzATMBAyImJjU0NjYzMhYWFRQGBicy'
+        'NjU0JiMiBhUUFgEiJiY1NDY2MzIWFhUUBgYnMjY1NCYjIgYVFBakAYeI/nlpMU8vL1AxMU8uLk8yHSUlHRwmJgHxMU8vL08xMk8u'
+        'L08yHSYlHRwmJQK8/UQBXytRODlRKytROThRK18sKSssLCspLP42K1E4OFErK1E4OFErXywpKysrKyksAAABADAAXwJzAl0ACAAA'
+        'ZSc3ITUhJzcXAXRHf/6EAXx/R/9fSYFqgUn/AAABADAAXwJzAl0ACAAAZSc3FwchFSEXAS///0d/AXz+hH9f//9JgWqBAP//AFIC'
+        'KwEvAvEEBwA7AQgAAAAAAAAAFgEOAAEAAAAAAQAABgAAAAEAAAAAARQACQAGAAMAAQQJAAAAugAPAAMAAQQJAAEANgDJAAMAAQQJ'
+        'AAIADgD/AAMAAQQJAAMAUgENAAMAAQQJAAQANgDJAAMAAQQJAAUAGgFfAAMAAQQJAAYAQAF5AAMAAQQJAAgAGAG5AAMAAQQJAAkA'
+        'IgHRAAMAAQQJAAsALAHzAAMAAQQJAAwAKAIfAAMAAQQJAA0BIgJHAAMAAQQJAA4ANgNpAAMAAQQJABAANgDJAAMAAQQJABEADgD/'
+        'AAMAAQQJABkAFgOfAAMAAQQJAQAADAO1AAMAAQQJARQAEgPBAAMAAQQJARYADAPTAAMAAQQJARcACgPfV2VpZ2h0RXh0cmFCb2xk'
+        'AEMAbwBwAHkAcgBpAGcAaAB0ACAAMgAwADIAMwAgAFQAaABlACAASABvAHMAdAAgAEcAcgBvAHQAZQBzAGsAIABQAHIAbwBqAGUA'
+        'YwB0ACAAQQB1AHQAaABvAHIAcwAgACgAaAB0AHQAcABzADoALwAvAGcAaQB0AGgAdQBiAC4AYwBvAG0ALwBFAGwAZQBtAGUAbgB0'
+        'AC0AVAB5AHAAZQAvAEgAbwBzAHQARwByAG8AdABlAHMAawApAFMAVABTADIAIABIAG8AcwB0ACAARwByAG8AdABlAHMAawAgAEUA'
+        'eAB0AHIAYQBCAG8AbABkAFIAZQBnAHUAbABhAHIAUwBUAFMAMgBIAG8AcwB0AEcAcgBvAHQAZQBzAGsARQB4AHQAcgBhAEIAbwBs'
+        'AGQALQBSAGUAZwB1AGwAYQByADsAbQBvAGQAaQBmAGkAZQBkAFYAZQByAHMAaQBvAG4AIAAxAC4AMAAwADMAUwBUAFMAMgBIAG8A'
+        'cwB0AEcAcgBvAHQAZQBzAGsARQB4AHQAcgBhAEIAbwBsAGQALQBSAGUAZwB1AGwAYQByAEUAbABlAG0AZQBuAHQAIABUAHkAcABl'
+        'AEQAbwEfAHUAawBhAG4AIABLAGEAcgBhAHABMQBuAGEAcgBoAHQAdABwAHMAOgAvAC8AZQBsAGUAbQBlAG4AdAB0AHkAcABlAC4A'
+        'YwBvAGgAdAB0AHAAcwA6AC8ALwBkAG8AdQBnAGgAawBhAG4ALgBjAG8AbQBUAGgAaQBzACAARgBvAG4AdAAgAFMAbwBmAHQAdwBh'
+        'AHIAZQAgAGkAcwAgAGwAaQBjAGUAbgBzAGUAZAAgAHUAbgBkAGUAcgAgAHQAaABlACAAUwBJAEwAIABPAHAAZQBuACAARgBvAG4A'
+        'dAAgAEwAaQBjAGUAbgBzAGUALAAgAFYAZQByAHMAaQBvAG4AIAAxAC4AMQAuACAAVABoAGkAcwAgAGwAaQBjAGUAbgBzAGUAIABp'
+        'AHMAIABhAHYAYQBpAGwAYQBiAGwAZQAgAHcAaQB0AGgAIABhACAARgBBAFEAIABhAHQAOgAgAGgAdAB0AHAAcwA6AC8ALwBvAHAA'
+        'ZQBuAGYAbwBuAHQAbABpAGMAZQBuAHMAZQAuAG8AcgBnAGgAdAB0AHAAcwA6AC8ALwBvAHAAZQBuAGYAbwBuAHQAbABpAGMAZQBu'
+        'AHMAZQAuAG8AcgBnAEgAbwBzAHQARwByAG8AdABlAHMAawBXAGUAaQBnAGgAdABFAHgAdAByAGEAQgBvAGwAZABJAHQAYQBsAGkA'
+        'YwBSAG8AbQBhAG4AAAMAAAAAAAD/nAAyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAB//8ADwABAAAADAAAAAAAAAACABIAAQABAAEA'
+        'AwAFAAEABwAHAAEACQAMAAEADgAPAAEAEQAVAAEAFwAXAAEAGQAbAAEAHQAfAAEAIQAmAAEAKAApAAEALAAvAAEAMQAxAAEAMwA1'
+        'AAEANwA5AAEAPwA/AAIAaQBpAAEAawBrAAEAAQAAAAoAJAA0AAJERkxUAA5sYXRuAA4ABAAAAAD//wABAAAAAWtlcm4ACAAAAAIA'
+        'AQAAAAIABh0gAAIACAACAAoREAABAKoABAAAAFAKbADSAQQC2gqeAU4CBALMAkYCbAKeAswCzALaAyQDzgQYBEIEgATKBOwFygYY'
+        'BsIHEArqCEIHJgdICwQHWgfICCgH2gfsCCIIKAgoCEIIQgh8CIYItAjuCQQJDgmECbYKFApOCmwKngq0CuoLBAs6DCILXAvOC/gM'
+        'IgyQDOoNbA2iDdwORg7gD2oPag9qD3QP7g/8D+4P/A/uD/wQBhCEAAIABgABAAgAAAAKACIACAAkADoAIQBLAFQAOABWAGEAQgBo'
+        'AGkATgAMABb/5QAY/+oAMP/gADL/5QA3//sAOv/7AFD/9gBR//QAVP/vAFb/0gBX/9IAW//gABIAFv/SABj/1wAw/+oAMv/qADf/'
+        '9AA6/+8AS//vAEz/7wBN//QATv/0AE//7wBQ//QAUf/xAFT/6gBW/7QAV//IAFv/vgBp//YALQAB/7kAA//gAAf/4AAK/74AD//g'
+        'ABH/4AAT/+8AG//VAB3/yAAe/8gAH//IACD/7wAh/9IAJ//cACj/3AAp/8gAKv/cACv/yAAs/+EALf/XAC7/5QAv/+AAMP/IADH/'
+        'wwAy/7QAM/+0ADT/3AA1/7kANv94ADf/4QA4/9UAOf/VADr/zQA+/+8AP//vAEv/5QBM/+UATf/0AE7/9ABP/9sAUP/2AFb/qgBb'
+        '/4wAaP/qAGn/7wAQABb/3AAY/9IAMP/0ADL/4QA6/+8AS//gAEz/4ABN//QATv/0AE//4ABQ//QAUf/0AFT/5QBW/74AV//IAFv/'
+        'qgAJADD/8QAy//QAOv/xAEv/9ABM//QAT//0AFD/9ABW/+AAW//cAAwAFv/gADD/qgA3//QAOv/0AFH/6gBS/+AAU//gAFT/7wBX'
+        '/+AAW//0AGj/8QBp/9sACwAW/4wAMP+cADL/9AA3/+UAUf/SAFL/4ABT/9wAVP+0AFf/qgBo//YAaf/vAAMAMP/xADL/+wA6//sA'
+        'EgAW/8gAGP/WADD/5QAy/9wAN//0ADr/5QBL/9wATP/cAE3/8QBO//EAT//cAFD/6gBR/+AAVP/lAFb/uQBX/74AW/++AGn/8QAq'
+        'AAH/qgAD//QAB//0AAr/oAAP//QAEf/0ABP/9AAU/+AAFv/cABf/3AAY/9sAGf/GABr/6gAb/9YAHf/cAB7/3AAf/9wAIf/SACn/'
+        '3AAr/9wALf/gAC//9gAw//YAMf/2ADL/8QAz/+oANP/vADX/qgA2/1YAN//0ADj/1gA5/9YAOv/IAEv/lgBM/5YAT/+WAFD/9ABW'
+        '/3gAV//cAFv/jABo/90Aaf/lABIAFv/IABj/1gAw/+UAMv/cADf/9AA6/+UASwAOAEz/3ABN//EATv/xAE//3ABQ/+oAUf/gAFT/'
+        '5QBW/7kAV/++AFv/vgBp//EACgAW/8gAMP/vADL/7wA6//YAUf/2AFT/9gBW//YAV//cAFv/9gBp//YADwAW/9MAGP/bADD/2wAy'
+        '/9wAN//0ADr/7wBL//YATP/2AE//8QBQ//EAVP/0AFb/4ABX/+AAW//cAGn/8QASACr/oQAw/5YAMv+RADf/yAA6/4wAS//IAEz/'
+        'yABN/+oATv/qAE//yABR//sAUv/gAFP/3ABU//YAVv+0AFv/yABo/9EAaf/qAAgAMP/0ADL/6gA6//YAS//0AEz/9ABP//QAVv/g'
+        'AFv/0gA3AAH/jAAD/8gAB//IAAr/lgAP/8gAEf/IABP/2wAY/+oAG/+bAB3/oAAe/6AAH/+gACD/4AAh/5YAI//gACT/9gAn/8gA'
+        'KP/IACn/oAAq/8gAK/+gACz/yAAt/6oALv/gAC//yAAw/8gAMf/IADL/vgAz/7QANP++ADX/jAA2/1oAN/++ADj/mwA5/5sAOv+b'
+        'AD7/4AA//+AAS/++AEz/vgBN/+AATv/gAE//vgBQ//QAUf/0AFL/3ABT/9IAVP/0AFb/cgBY/9wAWf/cAFr/3ABb/6oAaP++AGn/'
+        '1gATACr/yAAw/9IAMv/IADf/2AA6/7QAS//IAEz/yABN/+AATv/gAE//yABQ//QAUf/qAFL/4ABT/9wAVP/0AFb/lgBb/8gAaP/X'
+        'AGn/2wAqAAP/zAAH/8wAD//MABH/zAAT/9sAFv/qABv/4AAd/9cAHv/XAB//1wAg/+8AIf/gACf/9AAo//QAKf/XACr/9AAr/9cA'
+        'Lf/lAC7/6wAv/+AAMP+0ADH/tAAy//QAM/+0ADf/9AA4/+AAOf/gADr/9AA+/+8AP//vAFH/6gBS/9wAU//SAFT/5QBW//YAV//0'
+        'AFj/3ABZ/9wAWv/cAFv/9ABo//QAaf/qABMAKv+0ADD/vgAy/7QAN//DADr/jABL/74ATP++AE3/3ABO/9wAT/++AFD/9ABR/+AA'
+        'Uv/SAFP/uQBU/+oAVv+MAFv/tABo/6oAaf/IAAUAMP/cADL/6gA3//EAU//qAFv/9AAIADD/5QAy/9sAOv/2AFH/6gBU/9wAVv/g'
+        'AFf/qgBb/9wABAAb//YAM//2ADj/9gA5//YAGwAb/+cAHf/qAB7/6gAf/+oAIf/lACn/6gAr/+oALf/vADD/9AAx//EAMv/0ADP/'
+        '9AA4/+cAOf/nADr/6gBL/9wATP/cAE//3ABQ//QAUf/2AFL/9gBUABQAVv/gAFf/8QBb/8gAaP/2AGn/6gAEAFD/+wBR/+oAV//S'
+        'AGn/8QAEAEv/8QBQ//YAV//2AGn/9gANADD/5QA6//YASwAeAEwAHgBNABQATgAUAE8AFABR//EAUv/0AFP/3ABU/+oAV/++AGn/'
+        '6gABAGn/9gAGADD/2wAy//QAUf/qAFT/4ABX/7QAaf/2AA4AMP/bADL/3AA6//sAS//0AEz/9ABP//QAUP/xAFH/3ABU/9IAVv/c'
+        'AFf/oABb/9wAaP/2AGn/+wACACQAMgBX/9IACwAw//EAMv/vADr/5QBL/9wATP/cAE//3ABW/6oAV//IAFv/yABo//QAaf/qAA4A'
+        'MP/WADL/2wBL//sATP/7AE//+wBQ/+8AUf/bAFP/9gBU/9wAVv/XAFf/lgBb/8gAaP/7AGn/9gAFADL/9ABTAA8AVv/2AFf/3ABo'
+        '/+cAAgBX/9IAW//0AB0AG//bAB3/2wAe/9sAH//bACH/1gAkAAUAKf/bACv/2wAt/+AAMv/xADP/6gA0//EAOP/bADn/2wA6/9wA'
+        'S//XAEz/1wBP/9cAUP/xAFL/9ABT//QAVv+RAFf/3ABb/9IAXf/gAF//4ABh/+AAaP/vAGn/1gAMADr/4ABL/9wATP/cAE//3ABQ'
+        '//YAUv/xAFP/8QBW/6AAV//gAFv/0gBo/+oAaf/gABcAG//lAB3/4QAe/+EAH//hACH/6gAp/+EAK//hAC3/8QAuAAUAMP/xADH/'
+        '9gA4/+UAOf/lADr/9ABS/+oAU//qAFb/9gBX/9wAXf/2AF//9gBh//YAaP/7AGn/5QAOACr/7wAw/+kAOv/WAEv/tABM/7QAT/+0'
+        'AFD/9gBS/+oAU//qAFb/eABX/9wAW/+CAGj/2wBp/8gABwAw//YATwAKAFD/9gBX/8gAW//0AGj/+wBp//EADAAW/4wAMP+qADf/'
+        '9gBR/9IAUv/gAFP/4ABU/5YAV/+CAFz/9gBe//YAYP/2AGn/6gAFADD/4AAy//EAOv/0AFf/8QBp//EADQAW/+AAGP/qADD/9AAy'
+        '/+oAN//0ADr/9ABR//QAVP/0AFb/yABX//QAW//SAGj/9gBp//QABgAw/6oAUf/lAFP/8QBU/9wAV/+WAFv/9AANADD/3AAy/9wA'
+        'S//2AEz/9gBQ/+8AUf/IAFL/9gBT//YAVP/SAFb/0gBX/6oAW//IAGn/+wAIADD/6gAy/+oAS//vAEz/7wBP/+8AVv/SAFf/0gBb'
+        '/+oAHAAD/9wAB//cAA//3AAR/9wAE//xABT/yAAV//QAFv++ABf/yAAZ/74AG//xAB3/9AAe//QAH//0ACD/4AAkADIAKf/0ACv/'
+        '9AAt//YALv/qADD/1wAx/9wAM//qADQACgA4//EAOf/xAD7/4AA//+AACgAD//EAB//xAA//8QAR//EAFP/qABb/4AAX/+AAGf/c'
+        'ACQAHgAuAAoACgAD//EAB//xAA//8QAR//EAFP/qABb/4AAX/+AAGf/cACQAKAAuAAoAGwAD/9wAB//cAA//3AAR/9wAE//xABT/'
+        'yAAV//QAFv++ABf/yAAZ/74AG//xAB3/9AAe//QAH//0ACD/4AAkABQAKf/0ACv/9AAt//YALv/qADD/1wAx/9wAM//qADj/8QA5'
+        '//EAPv/gAD//4AAWAAP/6gAH/+oAD//qABH/6gAT//sAFv/0ABf/9AAZ//QAG//2AB3/+wAe//sAH//7ACD/9gAp//sAK//7ADD/'
+        '8QAx//YAM//0ADj/9gA5//YAPv/2AD//9gAgAAH/uQAD//YAB//2AAr/yAAP//YAEf/2ABP/9gAU//YAFv/0ABf/9AAY/+oAGf/g'
+        'ABr/9gAb/+8AHf/qAB7/6gAf/+oAIAAUACH/4AAkABQAKf/qACv/6gAt//QALgAZADX/uQA2/6AAN//qADj/7wA5/+8AOv/0AD4A'
+        'FAA/ABQADQAB/+AAFP/gABb/3AAX/+AAGP/cABn/vgAkABQALgAKADD/9AAx//EAMv/qADX/4AA2/9IADgAB/+AAFP/cABb/0gAX'
+        '/9wAGP/SABn/uQAa/+oALf/2AC4ACgAw//QAMf/xADL/6gA1/+AANv/IABoAA//lAAf/5QAK/9IAD//lABH/5QAT//QAFP/2ABb/'
+        '9AAX//QAGP/lABn/6gAb/9wAHf/bAB7/2wAf/9sAIf++ACQADwAp/9sAK//bAC3/wwAuABQANv9kADf/4AA4/9wAOf/cADr/4AAm'
+        'AAH/ggAD/80AB//NAAr/vgAP/80AEf/NABP/3AAY//YAGv/0ABv/lgAd/6AAHv+gAB//oAAg/+oAIf+MACT/9gAn/9IAKP/SACn/'
+        'oAAq/9IAK/+gACz/3AAt/5EALv/IAC//3AAw/9wAMf/gADL/3AAz/9wANP/IADX/ggA2/24AN//IADj/lgA5/5YAOv+gAD7/6gA/'
+        '/+oAIgAD/80AB//NAA//zQAR/80AE//SABT/tAAV/+AAFv94ABf/mwAY/+oAGf+CABr/9AAb/9IAHf/cAB7/3AAf/9wAIP/gACH/'
+        '9AAkAB4AKf/cACv/3AAt/+AALv++AC//9AAw/5EAMf+gADL/9gA0//QAN//qADj/0gA5/9IAOv/2AD7/4AA//+AAAgAW/9wAGP/c'
+        'AB4AA/++AAf/vgAP/74AEf++ABP/3AAU/8gAFf/SABb/qgAX/8gAGP/0ABn/tAAa//QAG//cAB3/3AAe/9wAH//cACD/3AAkACgA'
+        'Kf/cACv/3AAt/9IALv/gAC//6gAw/9IAMf/SADf/9AA4/9wAOf/cAD7/3AA//9wAAwAw/+AAMv/2ADr/6gACAAH/9gA1//YAHwAB'
+        '/+oAA//2AAf/9gAK//YAD//2ABH/9gAT//YAFP/NABb/xAAX/84AGP/lABn/pgAb//YAHf/2AB7/9gAf//YAIf/2ACn/9gAr//YA'
+        'Lf/2AC4ACgAw/+8AMf/sADL/5QAz/+8ANP/2ADX/6gA2/9wAN//0ADj/9gA5//YAIAAD//EAB//xAA//8QAR//EAE//7ABT/0gAW'
+        '/8gAF//gABj/9AAZ/74AGv/vABv/9AAd//EAHv/xAB//8QAh//YAJAAKACf/9gAo//YAKf/xACr/9gAr//EALf/xAC8ACgAw//QA'
+        'Mf/2ADL/6gAz/+oANv/0ADf/9AA4//QAOf/0AAIJ/gAEAAAKYgs2ACkAHwAAAAAAAP/2AAAAAAAA//YAAAAA/9wAAAAAAAD/4v/b'
+        'AAAAAAAAAAD/9AAA/9IAAP/xAAAAAAAAAAAAAAAAAAD/8QAA/+D/1gAAAAD/9gAA/77/3P/x/9EAAP/v/+D/yP/b/+UAAP/7/+oA'
+        'AAAAAAD/rwAA/9wAAAAA/80AAP/q//T/9AAAAAAAAP/7AAAAAP/b//YAAAAA//H/4AAAAAD/9AAA//EAAAAAAAAAAAAAAAAAAAAA'
+        'AAAAAAAAAAAAAP/2AAAAAAAAAAAAAAAA/9YAAAAAAAD/9v/gAAAAAAAAAAD/+f/2/9IAAAAAAAAAAAAAAAAAAAAAAAD/7//W/+8A'
+        'AP/qAAD/8QAA/4z/pv/0/6oAAP/n/77/qgAA/+oAAP/WAAAAAAAA//QAAAAA/6r/tP+0AAAAAP/2AAD/8f/vAAAAAAAAAAAAAP/q'
+        'AAAAAAAA//H/9AAAAAD/8QAAAAD/9gAAAAAAAP/IAAAAAAAAAAAAAAAA//sAAAAAAAAAAAAAAAAAAAAA/8gAAAAAAAAAAP/bAAAA'
+        'AAAAAAr/7wAA/9z/9AAAAAAAAP/qAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/9AAA'
+        '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'
+        'DwAAAAoAFQAEABkAAAADAAMAAAAAAAAAAAAYABgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+        'AAAAFwAXABcAAAAAABYAAAAWAAAAFgAcAB0AHAAdABsAGwACAAgAAQAIAAEALgAEAAAAEgBQAHYAhACEAIoAmACyALwAxgDcAQoB'
+        'IAEuAS4BLgEuATQBNAACAAUASwBPAAAAUQBUAAUAVgBXAAkAWwBbAAsAYgBnAAwACQBR/+AAVP/gAFf/3ABi/+AAY//2AGT/4ABl'
+        '//YAZv/gAGf/4AADAFH/4ABU/+AAV//cAAEAV//qAAMAUf/gAFT/6gBX/+AABgBL/8gATP/SAE//0gBW/6oAV//0AFv/oAACAFb/'
+        '4ABX/+AAAgBW/9IAV//SAAUAS//gAE//6gBW/4IAV//0AFv/vgALAEv/3ABM/9wATf/qAE7/6gBP/+AAUf/gAFL/4ABT/9IAVP/0'
+        'AFb/UABb/1oABQBR/+AAUv/gAFP/0gBU/4IAV/9QAAMAUf/gAFT/yABX/1oAAQBL/+oAAQBL//QAAAABAAAACgAmAEAAAkRGTFQA'
+        'DmxhdG4ADgAEAAAAAP//AAIAAAABAAJjYWx0AA5saWdhABQAAAABAAAAAAABAAIAAwAIAHwAlgAGAAAABAAOACIAOABOAAMAAQBc'
+        'AAEAeAABAFwAAQAAAAEAAwACAEIASAABAGQAAQBCAAEAAAABAAMAAQAyAAEATgACACwAMgABAAAAAQADAAIAFgAcAAEAOAABABwA'
+        'AQAAAAEAAQABAEoAAgABAEAASQAAAAEAAAABAAgAAgAKAAIAcABwAAEAAgAYADIABAAIAAEACAABABoAAQAIAAIABgAMAD4AAgAj'
+        'AD8AAgAmAAEAAQAgAAAAAQABAAgAAgAAABQAAgAAACQAAndnaHQBAAAAaXRhbAEWAAEABAAQAAEAAAAAARQDIAAAAAMAAQACARcA'
+        'AAAAAAEAAA=='
+    ),
+}
 
 
 def main():
