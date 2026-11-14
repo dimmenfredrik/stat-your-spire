@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STS2 Coach</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.6.1/dist/chart.umd.js"></script>
+<style type="text/tailwindcss">
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --color-bg: #161920;
+  --color-side: #12151b;
+  --color-card: #1c2029;
+  --color-card2: #232937;
+  --color-line: rgba(255,255,255,.075);
+  --color-ink: #e9edf3;
+  --color-dim: #a9b2c1;
+  --color-faint: #7d889b;
+  --color-good: #4fd18b;
+  --color-bad: #ff6b6b;
+  --color-warn: #ffb547;
+  --color-info: #6cb6ff;
+  --color-violet: #b48cff;
+}
+</style>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body class="bg-bg text-ink font-sans antialiased">
+<div id="cdnwarn" class="hidden fixed top-0 inset-x-0 z-50 bg-bad text-[#12151b] text-sm font-semibold text-center py-2">Could not load Chart.js from the internet. Check your connection and reload.</div>
+<div class="flex h-screen">
+  <!-- ============ sidebar ============ -->
+  <aside class="w-[284px] shrink-0 bg-side border-r border-line flex flex-col p-4 gap-1 overflow-y-auto">
+    <div class="flex items-center gap-3 px-2 pt-1 pb-5">
+      <div id="logo" class="size-9 rounded-xl grid place-items-center font-extrabold text-[#12151b] text-sm" style="background:var(--accent)">S2</div>
+      <div><div class="font-bold leading-tight">STS2 Coach</div><div class="text-xs text-faint">Run analytics</div></div>
+    </div>
+    <div class="px-2 pb-2 text-[11px] font-semibold tracking-wider text-faint uppercase">Characters</div>
+    <div id="chars" class="flex flex-col gap-1"></div>
+    <div class="mt-auto pt-6 flex flex-col gap-1">
+      <div class="px-2 pb-1 text-[11px] font-semibold tracking-wider text-faint uppercase">Options</div>
+      <label class="flex items-center gap-3 px-2 py-1.5 rounded-lg text-sm text-dim hover:bg-card cursor-pointer"><input id="optQuits" type="checkbox" class="sw">Count quits as losses</label>
+      <label class="flex items-center gap-3 px-2 py-1.5 rounded-lg text-sm text-dim hover:bg-card cursor-pointer"><input id="optCoop" type="checkbox" class="sw" checked>Include co-op runs</label>
+      <label class="flex items-center gap-3 px-2 py-1.5 rounded-lg text-sm text-dim hover:bg-card cursor-pointer"><input id="optAuto" type="checkbox" class="sw" checked>Auto-refresh</label>
+      <div class="flex gap-2 pt-3">
+        <button id="folderBtn" class="flex-1 rounded-lg border border-line bg-card hover:bg-card2 text-sm font-medium py-2 transition">Change folder</button>
+        <button id="reloadBtn" class="rounded-lg border border-line bg-card hover:bg-card2 text-sm font-medium py-2 px-3 transition">Refresh</button>
+      </div>
+      <div id="status" class="px-2 pt-2 text-xs text-faint leading-snug"></div>
+    </div>
+  </aside>
+
+  <!-- ============ main ============ -->
+  <main id="main" class="flex-1 min-w-0 overflow-y-auto">
+    <div class="max-w-[1340px] mx-auto px-8 pt-6 pb-16">
+      <header id="banner" class="rounded-2xl border accent-line p-5 mb-5" style="background:linear-gradient(120deg,color-mix(in srgb,var(--accent) 13%,transparent),transparent 70%),#1c2029">
+        <div class="flex items-center gap-3 flex-wrap">
+          <span class="size-3.5 rounded-full" style="background:var(--accent);box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 18%,transparent)"></span>
+          <h1 id="title" class="text-3xl font-bold tracking-tight">All characters</h1>
+          <span id="subtitle" class="text-sm text-faint"></span>
+        </div>
+        <div class="flex items-center gap-3 flex-wrap mt-4">
+          <span class="text-[11px] font-semibold tracking-wider text-faint uppercase">Ascension</span>
+          <select id="asc" class="rounded-lg border border-line bg-card2 text-sm px-3 py-1.5 outline-none focus:border-[var(--accent)]"></select>
+          <span class="text-[11px] font-semibold tracking-wider text-faint uppercase ml-3">Runs</span>
+          <div id="range" class="inline-flex rounded-lg border border-line bg-card p-0.5 gap-0.5"></div>
+          <span id="build" class="text-xs text-faint"></span>
+        </div>
+      </header>
+
+      <nav id="tabs" class="flex gap-7 border-b border-line mb-6"></nav>
+      <div id="view"></div>
+    </div>
+  </main>
+</div>
+
+<!-- folder modal -->
+<div id="modal" class="hidden fixed inset-0 z-40 bg-black/60 grid place-items-center">
+  <div class="w-[560px] max-w-[92vw] rounded-2xl bg-card border border-line p-6">
+    <h3 class="text-lg font-bold mb-1">History folder</h3>
+    <p class="text-sm text-faint mb-4">The folder that holds your finished .run files. Nothing is ever written there.</p>
+    <input id="mPath" class="w-full rounded-lg border border-line bg-card2 px-3 py-2 text-sm outline-none focus:border-[var(--accent)]" spellcheck="false">
+    <div id="mErr" class="text-sm text-bad min-h-5 mt-2"></div>
+    <div class="flex justify-end gap-2 mt-3">
+      <button id="mCancel" class="rounded-lg border border-line bg-card2 px-4 py-2 text-sm font-medium">Cancel</button>
+      <button id="mSave" class="rounded-lg px-4 py-2 text-sm font-semibold text-[#12151b]" style="background:var(--accent)">Save</button>
+    </div>
+  </div>
+</div>
+<div id="artPrev" class="hidden fixed z-[60] pointer-events-none w-[290px] rounded-xl border border-line bg-card p-3 shadow-2xl"><img alt="" class="hidden w-full max-h-[320px] object-contain rounded-lg mb-2"><div id="apT" class="font-bold text-base"></div><div id="apM" class="text-xs text-dim mt-0.5"></div><div id="apD" class="mt-1 text-[15px] text-ink leading-snug"></div><div id="apH" class="mt-2 pt-2 border-t border-line text-xs text-faint"></div></div>
+<div id="toast" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2"></div>
+
+<script src="static/web.js"></script>
+<script src="static/app.js"></script>
+<script src="static/deck.js"></script>
+<script src="static/focus.js"></script>
+</body>
+</html>
