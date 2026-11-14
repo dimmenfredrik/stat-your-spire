@@ -97,7 +97,7 @@ def call(name, args_json):
       <div id="wsRes" class="mt-5"></div>
       <div id="wsMsg" class="mt-4 text-sm text-dim"></div>
       <div id="wsErr" class="mt-2 text-sm text-bad"></div>
-      <p class="mt-6 text-[11px] text-faint">Unofficial fan tool, not affiliated with Mega Crit. Card pictures and exact card numbers are only in the downloadable version, because they come from your own game files.</p></div>`;
+      <p class="mt-6 text-[11px] text-faint">Want card pictures, exact card numbers and automatic refresh? Get the <a class="underline" href="https://github.com/dimmenfredrik/sts2-coach" target="_blank" rel="noopener">downloadable version</a>. Unofficial fan tool, not affiliated with Mega Crit.</p></div>`;
     document.body.appendChild(el);
     $("wsCopy").onclick = () => { navigator.clipboard && navigator.clipboard.writeText("%APPDATA%\\SlayTheSpire2\\steam"); $("wsCopy").textContent = "Copied"; };
     return el;
