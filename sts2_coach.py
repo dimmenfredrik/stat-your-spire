@@ -635,7 +635,7 @@ def act_baselines(runs):
     return {k: avg(v) for k, v in per.items()}
 
 
-def card_pick_impact(runs, include_abandoned, min_offered=MIN_OFFERED):
+def card_pick_impact(runs, include_abandoned, min_offered=MIN_OFFERED, act_ids=None):
     """Per-card draft impact using card_choices, turns_taken, cards_removed and final deck size.
 
     Only finished runs (wins + losses) are used, so every number can be tied to a result.
@@ -649,6 +649,8 @@ def card_pick_impact(runs, include_abandoned, min_offered=MIN_OFFERED):
         offered_here, first_pick = set(), {}
         for i, f in enumerate(fl):
             if not f["card_choices"] or f["map_type"] == "shop":
+                continue
+            if act_ids and f["act_id"] not in act_ids:
                 continue
             for name, picked in f["card_choices"]:
                 s = st[name]
@@ -671,7 +673,8 @@ def card_pick_impact(runs, include_abandoned, min_offered=MIN_OFFERED):
                     s["loss_decks"].append(r["deck_size"])
                 # Buyer's remorse: removed later in the same run (capped by times picked)
                 picks_in_run = sum(1 for f in fl for n, p in f["card_choices"]
-                                   if p and n == name and f["map_type"] != "shop")
+                                   if p and n == name and f["map_type"] != "shop"
+                                   and (not act_ids or f["act_id"] in act_ids))
                 removed = sum(g["removed"].count(name) for g in fl[first_pick[name] + 1:])
                 s["removed"] += min(removed, picks_in_run)
             else:
@@ -709,6 +712,28 @@ def card_pick_impact(runs, include_abandoned, min_offered=MIN_OFFERED):
     lift_base = (sum(d * n for d, n in deltas) / sum(n for _, n in deltas)) if deltas and sum(n for _, n in deltas) else 0.0
     meta = dict(base=base, bloat_base=bloat_base, tempo_base=tempo_base, lift_base=lift_base)
     return rows, meta
+
+
+def reward_stats(runs, include_abandoned, act_ids=None):
+    """Card-reward take/skip rates, overall and split by won vs lost runs."""
+    tot = taken = 0
+    split = {True: [0, 0], False: [0, 0]}     # win? -> [rewards, skipped]
+    for r in runs:
+        decided = r["win"] or is_loss(r, include_abandoned)
+        for f in r["floors"]:
+            if not f["card_choices"] or f["map_type"] == "shop":
+                continue
+            if act_ids and f["act_id"] not in act_ids:
+                continue
+            took = any(p for _, p in f["card_choices"])
+            tot += 1
+            taken += took
+            if decided:
+                split[r["win"]][0] += 1
+                split[r["win"]][1] += not took
+    return dict(rewards=tot, pick=pct(taken, tot),
+                skip_win=pct(split[True][1], split[True][0]) if split[True][0] >= 5 else None,
+                skip_loss=pct(split[False][1], split[False][0]) if split[False][0] >= 5 else None)
 
 
 def char_color(name, _cache={}):
@@ -955,7 +980,7 @@ class CoachApp(tk.Tk):
         # View: habits
         self.habits_view = ScrollFrame(self.content)
         # View: stats
-        self.stats_view, self.stats_txt = text_widget(self.content)
+        self._build_stats()
         # View: autopsy
         self.autopsy_view = tk.Frame(self.content, bg=BG)
         pane = tk.PanedWindow(self.autopsy_view, orient="horizontal", bg=BG, sashwidth=10,
@@ -1376,258 +1401,432 @@ class CoachApp(tk.Tk):
         self._render_list()
 
     # ----- Stats view ----------------------------------------------------
+    STATS_TABS = ("Draft Guide", "Overview", "Card Table")
+
+    def _build_stats(self):
+        self.stats_view = tk.Frame(self.content, bg=BG)
+        self.stats_tab = "Draft Guide"
+        self.biome = "All acts"
+        self.min_picks_scope = {"all": 8, "biome": 3}
+        self.table_sort = ("score", True)
+        self._stats_job = None
+
+        bar = tk.Frame(self.stats_view, bg=BG)
+        bar.pack(fill="x", pady=(0, 12))
+        seg = tk.Frame(bar, bg=CARD)
+        seg.pack(side="left")
+        self.stats_tab_btns = {}
+        for name in self.STATS_TABS:
+            b = tk.Label(seg, text=name, bg=CARD, fg=DIM, font=(UI_FONT_SEMI, 9), padx=14, pady=6, cursor="hand2")
+            b.pack(side="left", padx=1, pady=1)
+            b.bind("<Button-1>", lambda e, n=name: self._set_stats_tab(n))
+            self.stats_tab_btns[name] = b
+
+        right = tk.Frame(bar, bg=BG)
+        right.pack(side="right")
+        self.min_val_lbl = tk.Label(right, text="", bg=BG, fg=ACCENT, font=(UI_FONT_SEMI, 10), width=3)
+        self.min_val_lbl.pack(side="right")
+        self.slider_var = tk.IntVar(value=8)
+        self.min_scale = tk.Scale(right, from_=3, to=25, orient="horizontal", variable=self.slider_var,
+                                  showvalue=False, length=150, bg=ACCENT, troughcolor=BORDER,
+                                  activebackground="#ffd08a", highlightthickness=0, borderwidth=0,
+                                  sliderrelief="flat", sliderlength=14, width=8, cursor="hand2")
+        self.min_scale.pack(side="right", padx=6)
+        tk.Label(right, text="MIN PICKS", bg=BG, fg=FAINT, font=(UI_FONT_SEMI, 8)).pack(side="right", padx=(18, 0))
+        self.slider_var.trace_add("write", self._on_slider)
+
+        self.biome_bar = tk.Frame(right, bg=CARD)
+        self.biome_bar.pack(side="right")
+        self.biome_btns = {}
+
+        body = tk.Frame(self.stats_view, bg=BG)
+        body.pack(fill="both", expand=True)
+        self.guide_sf = ScrollFrame(body)
+        self.overview_sf = ScrollFrame(body)
+        self.table_frame = tk.Frame(body, bg=CARD)
+        cols = [("card", "CARD", 170, "w"), ("verdict", "VERDICT", 90, "w"), ("offered", "OFFERED", 70, "center"),
+                ("pick", "PICK %", 64, "center"), ("wrp", "WIN% PICKED", 110, "center"),
+                ("wrs", "WIN% SKIPPED", 116, "center"), ("lift", "LIFT", 60, "center"),
+                ("deck", "AVG DECK", 76, "center"), ("tempo", "TEMPO", 64, "center"),
+                ("removed", "REMOVED", 84, "center"), ("flags", "NOTES", 200, "w")]
+        self.card_tree = ttk.Treeview(self.table_frame, columns=[c[0] for c in cols], show="headings")
+        for key, title, wdt, anc in cols:
+            self.card_tree.heading(key, text=title, anchor=anc, command=lambda k=key: self._sort_table(k))
+            self.card_tree.column(key, width=wdt, minwidth=40, anchor=anc, stretch=key in ("card", "flags"))
+        self.card_tree.tag_configure("TAKE", foreground=GOOD)
+        self.card_tree.tag_configure("SKIP", foreground=BAD)
+        self.card_tree.tag_configure("OK", foreground=FG)
+        self.card_tree.tag_configure("LOW", foreground=FAINT)
+        tsb = ttk.Scrollbar(self.table_frame, orient="vertical", command=self.card_tree.yview,
+                            style="Modern.Vertical.TScrollbar")
+        self.card_tree.configure(yscrollcommand=tsb.set)
+        self.card_tree.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
+        tsb.pack(side="right", fill="y")
+        self._set_stats_tab(self.stats_tab, render=False)
+
+    def _scope_key(self):
+        return "all" if self.biome == "All acts" else "biome"
+
+    def _set_stats_tab(self, name, render=True):
+        self.stats_tab = name
+        for n, b in self.stats_tab_btns.items():
+            b.configure(bg=CARD_HI if n == name else CARD, fg=ACCENT if n == name else DIM)
+        for w in (self.guide_sf, self.overview_sf, self.table_frame):
+            w.pack_forget()
+        {"Draft Guide": self.guide_sf, "Overview": self.overview_sf,
+         "Card Table": self.table_frame}[name].pack(fill="both", expand=True)
+        if render:
+            self._render_stats()
+
+    def _set_biome(self, biome):
+        self.biome = biome
+        self.slider_var.set(self.min_picks_scope[self._scope_key()])
+        self._render_stats()
+
+    def _on_slider(self, *_):
+        self.min_picks_scope[self._scope_key()] = self.slider_var.get()
+        self.min_val_lbl.configure(text=str(self.slider_var.get()))
+        if self._stats_job:
+            self.after_cancel(self._stats_job)
+        self._stats_job = self.after(120, self._render_stats)
+
+    def _render_biome_bar(self):
+        for c in self.biome_bar.winfo_children():
+            c.destroy()
+        present = {f["act_id"] for r in self.runs for f in r["floors"]}
+        opts = ["All acts"] + [a for a in ACT_ORDER if a in present] + sorted(present - set(ACT_ORDER))
+        if self.biome not in ["All acts"] + [pretty_act(a) for a in opts[1:]]:
+            self.biome = "All acts"
+        for a in opts:
+            name = a if a == "All acts" else pretty_act(a)
+            on = name == self.biome
+            b = tk.Label(self.biome_bar, text=name, bg=CARD_HI if on else CARD, fg=ACCENT if on else DIM,
+                         font=(UI_FONT_SEMI, 9), padx=11, pady=6, cursor="hand2")
+            b.pack(side="left", padx=1, pady=1)
+            b.bind("<Button-1>", lambda e, n=name: self._set_biome(n))
+        self.min_val_lbl.configure(text=str(self.slider_var.get()))
+        self.min_scale.configure(state="disabled" if self.stats_tab == "Overview" else "normal")
+
+    def _biome_act_ids(self):
+        if self.biome == "All acts":
+            return None
+        return {a for r in self.runs for f in r["floors"] for a in [f["act_id"]] if pretty_act(a) == self.biome}
+
     def _render_stats(self):
-        t = self.stats_txt
-        t.configure(state="normal")
-        t.delete("1.0", "end")
-        w = lambda s, *tags: t.insert("end", s, tags)
+        self._stats_job = None
+        self._render_biome_bar()
+        if self.stats_tab == "Draft Guide":
+            self._render_guide()
+        elif self.stats_tab == "Overview":
+            self._render_overview()
+        else:
+            self._render_card_table()
+
+    # -- shared helpers for the stats sub-views
+    def _panel(self, parent, title, subtitle=None, accent=None):
+        outer = tk.Frame(parent, bg=CARD)
+        if accent:
+            tk.Frame(outer, bg=accent, height=3).pack(fill="x")
+        inner = tk.Frame(outer, bg=CARD, padx=18, pady=14)
+        inner.pack(fill="both", expand=True)
+        tk.Label(inner, text=title, bg=CARD, fg=accent or FG, font=(UI_FONT_SEMI, 11)).pack(anchor="w")
+        if subtitle:
+            wrap_label(inner, subtitle, 9, fg=FAINT).pack(fill="x", pady=(1, 0))
+        body = tk.Frame(inner, bg=CARD)
+        body.pack(fill="both", expand=True, pady=(10, 0))
+        return outer, body
+
+    def _guide_rows(self):
+        inc = self.include_abandoned.get()
+        act_ids = self._biome_act_ids()
+        rows, meta = card_pick_impact(self.runs, inc, min_offered=1, act_ids=act_ids)
+        n = self.slider_var.get()
+        ok = [x for x in rows if x["delta"] is not None and x["np"] >= n]
+        wsum = sum(min(x["np"], x["ns"]) for x in ok)
+        base = sum(x["delta"] * min(x["np"], x["ns"]) for x in ok) / wsum if wsum else 0.0
+        tb = meta["tempo_base"]
+        for x in rows:
+            x["rel"] = (x["delta"] - base) if x["delta"] is not None else None
+            k = min(x["np"], x["ns"])
+            x["score"] = x["rel"] * k / (k + 4) if x["rel"] is not None else None
+            x["trel"] = (x["tempo"] - tb) if x["tempo"] is not None else None
+            if x["delta"] is None or x["np"] < n:
+                x["verdict"] = "LOW"
+            elif x["score"] >= 4:
+                x["verdict"] = "TAKE"
+            elif x["score"] <= -4:
+                x["verdict"] = "SKIP"
+            else:
+                x["verdict"] = "OK"
+            notes = []
+            if x["trel"] is not None and x["tempo_n"] >= 3:
+                if x["trel"] <= -0.4:
+                    notes.append(("faster fights", GOOD))
+                elif x["trel"] >= 0.4:
+                    notes.append(("slower fights", WARN))
+            if x["bloat"]:
+                notes.append(("bloated losses", BAD))
+            if x["removed"] >= 2 or (x["picks"] and x["removed"] and x["removed"] / x["picks"] >= 0.3):
+                notes.append(("often removed", WARN))
+            x["notes"] = notes
+        return rows, meta, base
+
+    # -- Draft Guide
+    def _render_guide(self):
+        sf = self.guide_sf
+        sf.clear()
+        inner = sf.inner
+        if not self.runs:
+            wrap_label(inner, "No runs with the current filters.", 12, bg=BG, fg=DIM).pack(fill="x")
+            return
+        inc = self.include_abandoned.get()
+        rows, meta, base = self._guide_rows()
+        tk.Label(inner, text=("Draft guide - all acts" if self.biome == "All acts" else f"Draft guide - {self.biome}"),
+                 bg=BG, fg=FG, font=(UI_FONT_SEMI, 13)).pack(anchor="w", pady=(0, 8))
+        n = self.slider_var.get()
+        rs = reward_stats(self.runs, inc, self._biome_act_ids())
+
+        # Summary strip
+        strip = tk.Frame(inner, bg=BG)
+        strip.pack(fill="x", pady=(0, 12))
+        where = "across all acts" if self.biome == "All acts" else f"in {self.biome}"
+        self._mini_stat(strip, f"{rs['rewards']}", f"card rewards {where}")
+        self._mini_stat(strip, f"{rs['pick']:.0f}%", "of rewards you take a card")
+        if rs["skip_win"] is not None and rs["skip_loss"] is not None:
+            diff = rs["skip_loss"] - rs["skip_win"]
+            col = WARN if abs(diff) >= 8 else FG
+            self._mini_stat(strip, f"{rs['skip_win']:.0f}% / {rs['skip_loss']:.0f}%",
+                            "skip rate in wins / losses", col)
+        bases = meta["base"]
+        ids = self._biome_act_ids()
+        if ids:
+            bt = [bases[a] for a in ids if a in bases]
+            if bt:
+                self._mini_stat(strip, f"{avg(bt):.2f}", "avg turns per hallway fight here")
+
+        if rs["skip_win"] is not None and rs["skip_loss"] is not None and abs(rs["skip_loss"] - rs["skip_win"]) >= 8:
+            more = "more" if rs["skip_loss"] > rs["skip_win"] else "fewer"
+            tip = ("You skip more rewards in runs you lose - in this part of the run, taking a playable card "
+                   "beats skipping." if more == "more" else
+                   "You take more cards in runs you lose - be pickier here and skip cards that don't fix a "
+                   "real weakness.")
+            ban = tk.Frame(inner, bg="#2a2216", padx=16, pady=10)
+            ban.pack(fill="x", pady=(0, 12))
+            wrap_label(ban, "💡 " + tip, 10, bg="#2a2216", fg="#e9d9bf").pack(fill="x")
+
+        take = sorted([x for x in rows if x["verdict"] == "TAKE"], key=lambda x: -x["score"])
+        skip = sorted([x for x in rows if x["verdict"] == "SKIP"], key=lambda x: x["score"])
+        okay = sorted([x for x in rows if x["verdict"] == "OK"], key=lambda x: -x["np"])
+
+        cols = tk.Frame(inner, bg=BG)
+        cols.pack(fill="both", expand=True)
+        for i in range(3):
+            cols.grid_columnconfigure(i, weight=1, uniform="cols")
+        spec = [("TAKE", "Cards that lift your win rate", GOOD, take),
+                ("FINE EITHER WAY", "No clear effect yet", DIM, okay),
+                ("SKIP", "Cards your losing runs are full of", BAD, skip)]
+        for i, (title, sub, color, items) in enumerate(spec):
+            outer, body = self._panel(cols, f"{title}  ·  {len(items)}", sub, accent=color)
+            outer.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 6, 0 if i == 2 else 6))
+            if not items:
+                wrap_label(body, f"No cards here with {n}+ picks.\nTry lowering MIN PICKS.", 9, fg=FAINT).pack(fill="x")
+            for x in items[:12]:
+                self._card_tile(body, x, color)
+            if len(items) > 12:
+                tk.Label(body, text=f"+{len(items) - 12} more in Card Table", bg=CARD, fg=FAINT,
+                         font=(UI_FONT, 9)).pack(anchor="w", pady=(6, 0))
+
+        low = len([x for x in rows if x["verdict"] == "LOW"])
+        wrap_label(inner, f"Lift = your win rate when you took the card minus when you skipped it, compared with "
+                          f"your typical card here ({base:+.0f}). Cards need {n}+ picks to be rated "
+                          f"({low} cards have too few). The dots show confidence: ●○○ few picks, ●●● many. "
+                          f"Results, not card quality - small samples are hints, not rules.",
+                   9, bg=BG, fg=FAINT).pack(fill="x", pady=(14, 0))
+
+    def _mini_stat(self, parent, value, caption, color=FG):
+        f = tk.Frame(parent, bg=CARD, padx=16, pady=10)
+        f.pack(side="left", padx=(0, 10))
+        tk.Label(f, text=value, bg=CARD, fg=color, font=(UI_FONT_SEMI, 14)).pack(anchor="w")
+        tk.Label(f, text=caption, bg=CARD, fg=DIM, font=(UI_FONT, 9)).pack(anchor="w")
+
+    def _card_tile(self, parent, x, color):
+        tile = tk.Frame(parent, bg=CARD_HI, padx=12, pady=8)
+        tile.pack(fill="x", pady=3)
+        top = tk.Frame(tile, bg=CARD_HI)
+        top.pack(fill="x")
+        tk.Label(top, text=x["card"], bg=CARD_HI, fg=FG, font=(UI_FONT_SEMI, 10)).pack(side="left")
+        tk.Label(top, text=f"{x['delta']:+.0f}", bg=CARD_HI, fg=color if color != DIM else FG,
+                 font=(UI_FONT_SEMI, 12)).pack(side="right")
+        conf = "●●●" if x["np"] >= 8 else "●●○" if x["np"] >= 5 else "●○○"
+        mid = tk.Frame(tile, bg=CARD_HI)
+        mid.pack(fill="x")
+        tk.Label(mid, text=f"win {x['wr_p']:.0f}% taken · {x['wr_s']:.0f}% skipped · {x['np']} picks",
+                 bg=CARD_HI, fg=DIM, font=(UI_FONT, 9)).pack(side="left")
+        tk.Label(mid, text=conf, bg=CARD_HI, fg=FAINT, font=(UI_FONT, 8)).pack(side="right")
+        if x["notes"]:
+            nr = tk.Frame(tile, bg=CARD_HI)
+            nr.pack(fill="x", pady=(4, 0))
+            for text, col in x["notes"]:
+                tk.Label(nr, text=text, bg=CARD, fg=col, font=(UI_FONT, 8), padx=6, pady=1).pack(side="left", padx=(0, 4))
+
+    # -- Overview
+    def _render_overview(self):
+        sf = self.overview_sf
+        sf.clear()
+        inner = sf.inner
         runs = self.runs
         if not runs:
-            w("No runs found.\n", "h1")
-            w("Use 'Change folder...' in the sidebar to point at your STS2 saves\\history folder.\n", "dim")
-            t.configure(state="disabled")
+            wrap_label(inner, "No runs with the current filters.", 12, bg=BG, fg=DIM).pack(fill="x")
             return
         inc = self.include_abandoned.get()
         a = aggregate(runs, inc)
         nw, nl = len(a["wins"]), len(a["losses"])
+        grid = tk.Frame(inner, bg=BG)
+        grid.pack(fill="both", expand=True)
+        grid.grid_columnconfigure(0, weight=1, uniform="ov")
+        grid.grid_columnconfigure(1, weight=1, uniform="ov")
 
-        w("Record\n", "h2")
-        w("  Wins ", "bold"); w(f"{nw}", "good")
-        w("   Losses ", "bold"); w(f"{nl}", "bad")
-        w(f"   Abandoned {len(a['abandoned'])}", "dim")
-        w("   Win rate ", "bold"); w(f"{pct(nw, nw + nl):.1f}%\n", "good" if pct(nw, nw + nl) >= 25 else "warn")
-        w(f"  Avg final deck: {a['deck_all']:.1f}   (wins {a['deck_win']:.1f} · losses {a['deck_loss']:.1f})\n")
-        if self.character == ALL and a["chars"]:
-            w("  By character: ", "dim")
-            w("   ".join(f"{c} {v[0]}-{v[1]}" for c, v in sorted(a["chars"].items(), key=lambda kv: -sum(kv[1]))) + "\n")
-        asc = Counter(r["ascension"] for r in a["wins"])
-        if asc:
-            w("  Wins by ascension: " + "   ".join(f"A{k}: {v}" for k, v in sorted(asc.items())) + "\n", "dim")
+        def place(panel, r, c, span=1):
+            panel.grid(row=r, column=c, columnspan=span, sticky="nsew",
+                       padx=(0 if c == 0 else 6, 0 if c + span >= 2 else 6), pady=(0, 12))
 
-        w("Card rewards - pick vs skip\n", "h2")
-        w(f"  {'Act':<30}{'Rewards':>8}{'Picked':>10}{'Skipped':>10}\n", "faint")
-        for act in sorted(a["picks"]):
-            offers, picked, names = a["picks"][act]
-            lbl = f"Act {act} ({'/'.join(sorted(names))})"
-            sk = pct(offers - picked, offers)
-            w(f"  {lbl:<30}{offers:>8}{pct(picked, offers):>9.0f}%")
-            w(f"{sk:>9.0f}%\n", "warn" if act == 1 and sk > 35 else "")
-
-        w("Fight speed & damage\n", "h2")
-        w(f"  {'Act':<26}{'Type':<9}{'Fights':>7}{'Avg turns':>11}{'Avg dmg':>10}\n", "faint")
+        # Fight speed table (full width)
+        p, b = self._panel(grid, "Fight speed by biome", "Average turns and damage per fight. Red = slower than target.")
+        place(p, 0, 0, 2)
+        heads = ["Biome", "Hallway turns", "Hallway dmg", "Elite turns", "Elite dmg", "Boss turns", "Boss dmg", "Fights"]
+        for j, h in enumerate(heads):
+            tk.Label(b, text=h.upper(), bg=CARD, fg=FAINT, font=(UI_FONT_SEMI, 8)).grid(
+                row=0, column=j, sticky="w", padx=(0, 22), pady=(0, 4))
         order = sorted(a["fights"], key=lambda k: (ACT_ORDER.index(k) if k in ACT_ORDER else 99, k))
-        for act_id in order:
+        for i, act_id in enumerate(order, 1):
             num = a["act_num"].get(act_id, 0)
+            fd = a["fights"][act_id]
+            tk.Label(b, text=f"Act {num} · {pretty_act(act_id)}", bg=CARD, fg=FG,
+                     font=(UI_FONT_SEMI, 10)).grid(row=i, column=0, sticky="w", padx=(0, 22), pady=3)
+            col = 1
             for rt in COMBAT_TYPES:
-                data = a["fights"][act_id].get(rt)
-                if not data:
-                    continue
-                turns = avg([d[0] for d in data])
-                dmg = avg([d[1] for d in data])
-                limit = SLOW_TURNS_BY_ACT.get(num)
-                slow = rt == "monster" and limit and turns > limit
-                w(f"  {'Act ' + str(num) + ' ' + pretty_act(act_id):<26}{rt:<9}{len(data):>7}")
-                w(f"{turns:>11.2f}", "bad" if slow else "good" if rt == "monster" else "")
-                w(f"{dmg:>10.1f}")
-                if slow:
-                    w(f"   ◄ slow (target ≤ {limit})", "bad")
-                w("\n")
+                data = fd.get(rt, [])
+                if data:
+                    t = avg([d[0] for d in data])
+                    lim = SLOW_TURNS_BY_ACT.get(num)
+                    tc = (BAD if lim and t > lim else GOOD) if rt == "monster" else FG
+                    tk.Label(b, text=f"{t:.2f}", bg=CARD, fg=tc, font=(UI_FONT, 10)).grid(row=i, column=col, sticky="w")
+                    tk.Label(b, text=f"{avg([d[1] for d in data]):.1f}", bg=CARD, fg=DIM,
+                             font=(UI_FONT, 10)).grid(row=i, column=col + 1, sticky="w")
+                else:
+                    tk.Label(b, text="-", bg=CARD, fg=FAINT).grid(row=i, column=col, sticky="w")
+                col += 2
+            tk.Label(b, text=str(sum(len(v) for v in fd.values())), bg=CARD, fg=DIM,
+                     font=(UI_FONT, 10)).grid(row=i, column=7, sticky="w")
 
-        w("Resource leaks at death\n", "h2")
+        # Card rewards by biome
+        p, b = self._panel(grid, "Card rewards by biome", "How often you take a card, and skip rate in wins vs losses.")
+        place(p, 1, 0)
+        for j, h in enumerate(["Biome", "Rewards", "Take %", "Skip in wins", "Skip in losses"]):
+            tk.Label(b, text=h.upper(), bg=CARD, fg=FAINT, font=(UI_FONT_SEMI, 8)).grid(
+                row=0, column=j, sticky="w", padx=(0, 18), pady=(0, 4))
+        acts_present = sorted({f["act_id"] for r in runs for f in r["floors"]},
+                              key=lambda k: ACT_ORDER.index(k) if k in ACT_ORDER else 99)
+        for i, act_id in enumerate(acts_present, 1):
+            st = reward_stats(runs, inc, {act_id})
+            if not st["rewards"]:
+                continue
+            vals = [pretty_act(act_id), str(st["rewards"]), f"{st['pick']:.0f}%",
+                    "-" if st["skip_win"] is None else f"{st['skip_win']:.0f}%",
+                    "-" if st["skip_loss"] is None else f"{st['skip_loss']:.0f}%"]
+            for j, v in enumerate(vals):
+                fg = FG if j == 0 else DIM
+                if j == 4 and st["skip_win"] is not None and st["skip_loss"] is not None \
+                        and abs(st["skip_loss"] - st["skip_win"]) >= 8:
+                    fg = WARN
+                tk.Label(b, text=v, bg=CARD, fg=fg, font=(UI_FONT_SEMI if j == 0 else UI_FONT, 10)).grid(
+                    row=i, column=j, sticky="w", padx=(0, 18), pady=2)
+
+        # Leaks
+        p, b = self._panel(grid, "Leaks at death", f"Based on {nl} losses.")
+        place(p, 1, 1)
         if nl:
-            gl, pl, al = len(a["gold_leak"]), len(a["pot_leak"]), len(a["any_leak"])
-            w(f"  Died with >{GOLD_LEAK_THRESHOLD} unspent gold   ")
-            w(f"{gl}/{nl}  ({pct(gl, nl):.0f}%)\n", "bad" if pct(gl, nl) >= 25 else "warn")
-            w("  Died holding unused potions   ")
-            w(f"{pl}/{nl}  ({pct(pl, nl):.0f}%)\n", "bad" if pct(pl, nl) >= 25 else "warn")
-            w(f"  Either leak                   {al}/{nl}  ({pct(al, nl):.0f}%)\n", "bold")
-            w(f"  Average gold at death: {a['avg_gold_at_death']:.0f}\n", "dim")
-            pots = Counter(p for r in a["pot_leak"] for p in r["unused_potions"]).most_common(5)
+            for label, n_, color in ((f"Gold >{GOLD_LEAK_THRESHOLD}", len(a["gold_leak"]), WARN),
+                                     ("Unused potions", len(a["pot_leak"]), WARN),
+                                     ("Either leak", len(a["any_leak"]), BAD)):
+                self._bar(b, label, pct(n_, nl), color, f"{n_}/{nl}")
+            tk.Label(b, text=f"Average gold at death: {a['avg_gold_at_death']:.0f}", bg=CARD, fg=DIM,
+                     font=(UI_FONT, 9)).pack(anchor="w", pady=(8, 0))
+            pots = Counter(p_ for r in a["pot_leak"] for p_ in r["unused_potions"]).most_common(4)
             if pots:
-                w("  Potions you most often die holding: " + ", ".join(f"{p} ×{n}" for p, n in pots) + "\n", "dim")
+                wrap_label(b, "Often held at death: " + ", ".join(f"{p_} ×{k}" for p_, k in pots),
+                           9, fg=FAINT).pack(fill="x")
         else:
-            w("  No losses in this view.\n", "dim")
+            tk.Label(b, text="No losses here.", bg=CARD, fg=GOOD).pack(anchor="w")
 
-        w("Nemesis list\n", "h2")
+        # Nemesis
+        p, b = self._panel(grid, "Nemesis list", "What ends your runs.")
+        place(p, 2, 0)
         if a["nemesis"]:
             top = a["nemesis"][0][1]
-            for name, n in a["nemesis"]:
-                w(f"  {name:<30}", "bold"); w(f"{n:>3}  "); w("█" * max(1, round(24 * n / top)) + "\n", "bad")
-            w("  Deaths by act:  " + "   ".join(f"Act {k}: {v}" for k, v in sorted(a["death_act"].items())) + "\n", "dim")
-            w("  Deaths by room: " + "   ".join(f"{k}: {v}" for k, v in a["death_room"].most_common()) + "\n", "dim")
+            for name, k in a["nemesis"][:8]:
+                row = tk.Frame(b, bg=CARD)
+                row.pack(fill="x", pady=2)
+                tk.Label(row, text=name, bg=CARD, fg=FG, font=(UI_FONT, 10), width=26, anchor="w").pack(side="left")
+                track = tk.Frame(row, bg=CARD, width=180, height=10)
+                track.pack(side="left", padx=6)
+                track.pack_propagate(False)
+                tk.Frame(track, bg=BAD, width=max(4, int(180 * k / top)), height=10).place(x=0, y=0)
+                tk.Label(row, text=str(k), bg=CARD, fg=DIM, font=(UI_FONT, 9)).pack(side="left")
+            wrap_label(b, "By act: " + "  ·  ".join(f"Act {k}: {v}" for k, v in sorted(a["death_act"].items()))
+                       + "      By room: " + "  ·  ".join(f"{k} {v}" for k, v in a["death_room"].most_common()),
+                       9, fg=FAINT).pack(fill="x", pady=(8, 0))
         else:
-            w("  Nothing has killed you yet here.\n", "good")
+            tk.Label(b, text="Nothing has killed you here yet.", bg=CARD, fg=GOOD).pack(anchor="w")
 
-        self._card_impact_section(w, runs, inc)
+        # Record
+        p, b = self._panel(grid, "Record")
+        place(p, 2, 1)
+        lines = [(f"{nw} wins  ·  {nl} losses  ·  {len(a['abandoned'])} quit", FG),
+                 (f"Win rate {pct(nw, nw + nl):.1f}%", GOOD if pct(nw, nw + nl) >= 25 else WARN),
+                 (f"Avg final deck: {a['deck_win']:.1f} in wins  ·  {a['deck_loss']:.1f} in losses", DIM)]
+        asc = Counter(r["ascension"] for r in a["wins"])
+        if asc:
+            lines.append(("Wins by ascension: " + "  ·  ".join(f"A{k} ×{v}" for k, v in sorted(asc.items())), DIM))
+        if self.character == ALL and a["chars"]:
+            lines.append(("By character: " + "  ·  ".join(
+                f"{c} {v[0]}-{v[1]}" for c, v in sorted(a["chars"].items(), key=lambda kv: -sum(kv[1]))), DIM))
+        for text, col in lines:
+            wrap_label(b, text, 10, fg=col).pack(fill="x", pady=1)
 
-        best, worst = card_insights(runs, inc)
-        if best or worst:
-            w("Card insights (cards you added, by final-deck win rate)\n", "h2")
-            if best:
-                w("  Show up in your wins\n", "good")
-                for c, wn, n in best:
-                    w(f"    {c:<28}{wn}/{n} won  ({pct(wn, n):.0f}%)\n")
-            if worst:
-                w("  Keep showing up in losses (never won with them)\n", "bad")
-                for c, wn, n in worst:
-                    w(f"    {c:<28}0/{n} won\n", "dim")
-            w("  Small samples - treat as hints, not rules.\n", "faint")
-        t.configure(state="disabled")
-
-    def _card_impact_section(self, w, runs, inc):
-        rows, meta = card_pick_impact(runs, inc)
-        base, tb, lb = meta["base"], meta["tempo_base"], meta["lift_base"]
-        w("Card Pick Impact\n", "h2")
-        w(f"  Cards offered {MIN_OFFERED}+ times in card rewards (shops excluded), finished runs only. "
-          f"Sorted by win-rate lift (weighted by sample size).\n", "dim", "ui")
-        if base:
-            w("  Act baselines (avg turns per hallway fight): "
-              + "   ".join(f"{pretty_act(k)} {v:.2f}" for k, v in
-                          sorted(base.items(), key=lambda kv: ACT_ORDER.index(kv[0]) if kv[0] in ACT_ORDER else 99))
-              + "\n", "faint", "ui")
-        self._winners_panel(runs, inc)
-        if not rows:
-            w(f"  No card has been offered {MIN_OFFERED}+ times with the current filters.\n", "dim")
-            return
-        w("  Full table\n", "bold")
-        hdr = (f"  {'Card':<22}{'Offered':>8}{'Pick%':>7}{'WR picked':>12}{'WR skipped':>12}{'Lift':>7}"
-               f"{'Avg deck':>10}{'Tempo':>8}{'Removed':>9}   Flags\n")
-        w(hdr, "faint")
-        lifters, overdrafts = [], []
+    # -- Card table
+    def _render_card_table(self):
+        rows, meta, base = self._guide_rows()
+        rank = {"TAKE": 0, "OK": 1, "SKIP": 2, "LOW": 3}
+        key, desc = self.table_sort
+        getters = {
+            "card": lambda x: x["card"], "verdict": lambda x: rank[x["verdict"]],
+            "offered": lambda x: x["offered"], "pick": lambda x: x["pick_pct"],
+            "wrp": lambda x: x["wr_p"] if x["wr_p"] is not None else -1,
+            "wrs": lambda x: x["wr_s"] if x["wr_s"] is not None else -1,
+            "lift": lambda x: x["delta"] if x["delta"] is not None else -999,
+            "deck": lambda x: x["deck"] or 0, "tempo": lambda x: x["tempo"] if x["tempo"] is not None else 99,
+            "removed": lambda x: x["removed"], "flags": lambda x: len(x["notes"]),
+            "score": lambda x: (x["score"] if x["score"] is not None and x["verdict"] != "LOW" else -999),
+        }
+        rows = [x for x in rows if x["offered"] >= 3]
+        rows.sort(key=getters[key], reverse=desc)
+        self.card_tree.delete(*self.card_tree.get_children())
+        label = {"TAKE": "✔ Take", "SKIP": "✖ Skip", "OK": "Either", "LOW": "few picks"}
         for x in rows:
-            w(f"  {x['card'][:21]:<22}", "bold")
-            w(f"{x['offered']:>8}")
-            w(f"{x['pick_pct']:>6.0f}%", "warn" if x["pick_pct"] >= 75 else "")
-            wrp = f"{x['wr_p']:.0f}% ({x['np']})" if x["wr_p"] is not None else "-"
-            wrs = f"{x['wr_s']:.0f}% ({x['ns']})" if x["wr_s"] is not None else "-"
-            w(f"{wrp:>12}")
-            w(f"{wrs:>12}", "dim")
-            d = x["delta"]
-            dtag = "" if d is None else "good" if d - lb >= 10 else "bad" if d - lb <= -10 else "dim"
-            w(f"{('-' if d is None else f'{d:+.0f}'):>7}", dtag)
-            deck = "-" if x["deck"] is None else f"{x['deck']:.1f}"
-            w(f"{deck:>10}", "bad" if x["bloat"] else ("warn" if x["deck"] and x["deck"] >= BLOAT_DECK else ""))
-            t = x["tempo"]
-            ttag = "" if t is None else "good" if t - tb <= -0.4 else "bad" if t - tb >= 0.4 else "dim"
-            w(f"{('-' if t is None else f'{t:+.2f}'):>8}", ttag)
-            w(f"{x['removed']:>9}", "warn" if x["removed"] >= 2 else "dim")
-            flags = []
-            if d is not None and d - lb >= 10 and x["np"] >= 3:
-                flags.append(("LIFTS WR", "good"))
-                lifters.append(x)
-            if d is not None and d - lb <= -10 and x["pick_pct"] >= 40 and x["np"] >= 3:
-                flags.append(("OVER-DRAFTED", "bad"))
-                overdrafts.append(x)
-            if x["bloat"]:
-                flags.append((f"BLOAT {x['bloat_n']}/{x['loss_n']}", "bad"))
-            if t is not None and x["tempo_n"] >= 3:
-                if t - tb >= 0.4:
-                    flags.append(("SLOWS DECK", "warn"))
-                elif t - tb <= -0.4:
-                    flags.append(("SPEEDS UP", "good"))
-            if x["removed"] >= 2 or (x["picks"] and x["removed"] / x["picks"] >= 0.3 and x["removed"] >= 1):
-                flags.append(("REGRET", "warn"))
-            w("   ")
-            for label, tag in flags:
-                w(f"{label}  ", tag)
-            w("\n")
-        w(f"  Lift = WR picked − WR skipped (run-level). Your typical card shows {lb:+.0f} (longer runs see and pick more "
-          f"cards), so LIFTS WR / OVER-DRAFTED flag cards 10+ points above/below that.\n", "faint", "ui")
-        w("  Tempo = avg turns in the next "
-          f"{TEMPO_FIGHTS} hallway fights after picking it, vs that act's baseline (negative = faster).\n"
-          f"  A typical pick scores {tb:+.2f} (decks get faster as an act goes on), so SPEEDS UP / SLOWS DECK "
-          f"flag cards 0.4+ turns better/worse than that.\n"
-          f"  Avg deck = final deck size in runs where you picked it.  BLOAT = 60%+ of its losing runs ended with "
-          f"{BLOAT_DECK}+ cards (your overall rate: {meta['bloat_base']:.0%}).  Removed = times you later "
-          f"removed it in the same run.\n", "faint", "ui")
-        if lifters or overdrafts:
-            w("  Takeaways\n", "bold")
-            for x in sorted(lifters, key=lambda x: -x["delta"])[:3]:
-                w(f"    ✔ {x['card']}: ", "good")
-                w(f"you win {x['wr_p']:.0f}% when you take it vs {x['wr_s']:.0f}% when you don't - "
-                  f"consider taking it more (picked {x['pick_pct']:.0f}% now).\n", "ui")
-            for x in sorted(overdrafts, key=lambda x: x["delta"])[:3]:
-                w(f"    ✖ {x['card']}: ", "bad")
-                w(f"picked {x['pick_pct']:.0f}% of the time, but its lift ({x['delta']:+.0f}) is well below your "
-                  f"typical card ({lb:+.0f}) - try skipping it unless it fills a clear need.\n", "ui")
-        w("  Small samples - a card needs many offers before these numbers mean much.\n", "faint", "ui")
+            self.card_tree.insert("", "end", tags=(x["verdict"],), values=(
+                x["card"], label[x["verdict"]], x["offered"], f"{x['pick_pct']:.0f}%",
+                "-" if x["wr_p"] is None else f"{x['wr_p']:.0f}% ({x['np']})",
+                "-" if x["wr_s"] is None else f"{x['wr_s']:.0f}% ({x['ns']})",
+                "-" if x["delta"] is None else f"{x['delta']:+.0f}",
+                "-" if x["deck"] is None else f"{x['deck']:.1f}",
+                "-" if x["tempo"] is None else f"{x['tempo']:+.2f}",
+                x["removed"], ", ".join(t for t, _ in x["notes"])))
 
-    def _winners_panel(self, runs, inc):
-        """Top 5 run-winners / bottom 5 run-killers with a Min Picks slider, embedded in the Stats text."""
-        t = self.stats_txt
-        all_rows, _ = card_pick_impact(runs, inc, min_offered=1)
-        all_rows = [x for x in all_rows if x["delta"] is not None]
-
-        panel = tk.Frame(t, bg=CARD)
-        top = tk.Frame(panel, bg=CARD)
-        top.pack(fill="x", pady=(4, 8))
-        tk.Label(top, text="MIN PICKS", bg=CARD, fg=FAINT, font=(UI_FONT_SEMI, 8)).pack(side="left")
-        val_lbl = tk.Label(top, text="", bg=CARD, fg=ACCENT, font=(UI_FONT_SEMI, 10), width=3)
-        scale = tk.Scale(top, from_=3, to=25, orient="horizontal", variable=self.min_picks, showvalue=False,
-                         length=260, bg=ACCENT, fg=FG, troughcolor=BORDER, activebackground="#ffd08a",
-                         highlightthickness=0, borderwidth=0, sliderrelief="flat", sliderlength=16, width=10,
-                         cursor="hand2")
-        scale.pack(side="left", padx=(10, 6))
-        val_lbl.pack(side="left")
-        info = tk.Label(top, text="", bg=CARD, fg=FAINT, font=(UI_FONT, 9))
-        info.pack(side="left", padx=12)
-
-        cols = tk.Frame(panel, bg=CARD)
-        cols.pack(fill="x")
-        boxes = []
-        for title, color in (("TOP 5 RUN-WINNERS", GOOD), ("BOTTOM 5 RUN-KILLERS", BAD)):
-            box = tk.Frame(cols, bg=CARD_HI, padx=14, pady=10, width=500, height=188)
-            box.pack(side="left", padx=(0, 12), anchor="n")
-            box.pack_propagate(False)
-            tk.Label(box, text=title, bg=CARD_HI, fg=color, font=(UI_FONT_SEMI, 9)).pack(anchor="w", pady=(0, 6))
-            body = tk.Frame(box, bg=CARD_HI)
-            body.pack(fill="both", expand=True)
-            boxes.append((body, color))
-
-        def fill(body, items, color, empty):
-            for c in body.winfo_children():
-                c.destroy()
-            if not items:
-                tk.Label(body, text=empty, bg=CARD_HI, fg=FAINT, font=(UI_FONT, 9),
-                         justify="left").grid(row=0, column=0, sticky="w")
-                return
-            for i, x in enumerate(items):
-                tk.Label(body, text=f"{i + 1}", bg=CARD_HI, fg=FAINT, font=(UI_FONT_SEMI, 10),
-                         width=2, anchor="w").grid(row=i, column=0, sticky="w")
-                tk.Label(body, text=x["card"], bg=CARD_HI, fg=FG, font=(UI_FONT_SEMI, 10),
-                         anchor="w", width=19).grid(row=i, column=1, sticky="w")
-                tk.Label(body, text=f"{x['delta']:+.0f}", bg=CARD_HI, fg=color, font=(UI_FONT_SEMI, 11),
-                         width=5, anchor="e").grid(row=i, column=2, sticky="e")
-                tk.Label(body, text=f"  {x['wr_p']:.0f}% vs {x['wr_s']:.0f}%  ·  {x['np']} picks",
-                         bg=CARD_HI, fg=DIM, font=(UI_FONT, 9), anchor="w").grid(row=i, column=3, sticky="w", pady=2)
-
-        def update(_v=None):
-            n = self.min_picks.get()
-            val_lbl.configure(text=str(n))
-            ok = [x for x in all_rows if x["np"] >= n and x["ns"] >= 1]
-            best = sorted(ok, key=lambda x: (-x["delta"], -x["np"]))[:5]
-            names = {x["card"] for x in best}
-            worst = [x for x in sorted(ok, key=lambda x: (x["delta"], -x["np"])) if x["card"] not in names][:5]
-            info.configure(text=f"{len(ok)} cards picked in {n}+ finished runs  ·  "
-                                f"lift = win rate when picked vs when skipped")
-            empty = f"No cards picked in {n}+ finished runs.\nLower Min Picks or widen the filters."
-            fill(boxes[0][0], best, GOOD, empty)
-            fill(boxes[1][0], worst, BAD, empty if not ok else "Not enough other cards qualify.")
-
-        def on_change(*_):
-            if panel.winfo_exists():
-                update()
-        old = getattr(self, "_min_picks_trace", None)
-        if old:
-            try:
-                self.min_picks.trace_remove("write", old)
-            except tk.TclError:
-                pass
-        self._min_picks_trace = self.min_picks.trace_add("write", on_change)
-        update()
-        t.insert("end", "  ")
-        t.window_create("end", window=panel)
-        t.insert("end", "\n\n")
+    def _sort_table(self, key):
+        cur, desc = self.table_sort
+        self.table_sort = (key, not desc if cur == key else key not in ("card", "verdict", "tempo"))
+        self._render_card_table()
 
     # ----- Autopsy view --------------------------------------------------
     def _render_list(self):
