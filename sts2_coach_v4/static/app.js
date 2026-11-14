@@ -115,12 +115,9 @@ function renderBanner() {
   const chars = D.sidebar.filter(e => e.name !== ALL && charArt(e.name, "icon"));
   $("#bannerIcon").innerHTML = S.character !== ALL ? (charArt(S.character, "icon") ? charIcon(S.character, 52) : dot)
     : (chars.length ? `<span class="flex gap-1">${chars.map(e => charIcon(e.name, 32)).join("")}</span>` : dot);
-  const ic = S.character !== ALL ? charArt(S.character, "icon") : "";
   const ba = $("#bannerArt");
-  ba.className = "pointer-events-none absolute inset-0" + (ic ? "" : " hidden");
-  ba.innerHTML = ic ? `<div class="absolute inset-0" style="background:radial-gradient(circle at 88% 50%,color-mix(in srgb,var(--accent) 45%,transparent),transparent 52%)"></div>
-    <img src="${ic}" alt="" class="absolute" style="right:-30px;top:-40px;height:260px;opacity:.09;filter:grayscale(1) brightness(2)">
-    <div class="absolute inset-y-0 flex items-center" style="right:48px">${halo(ic, 122, 98, "var(--accent)")}</div>` : "";
+  ba.className = "hidden";
+  ba.innerHTML = "";
 }
 function renderTabs() {
   const tabs = [["focus", "Focus"], ["dash", "Dashboard"], ["habits", "Habits"], ["cards", "Cards"]];
