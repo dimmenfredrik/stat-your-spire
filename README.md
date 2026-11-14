@@ -15,7 +15,7 @@ If your runs aren't found, use *Change folder* in the sidebar. The history folde
 `C:\Users\<you>\AppData\Roaming\SlayTheSpire2\steam\<steam id>\profile1\saves\history`.
 
 ### Icons, wiki links and your own pictures
-Floors show small icons (fight, elite, boss, campfire, shop, event, treasure, ancient). Card, relic and enemy names link to the Slay the Spire wiki (dotted underline). If you want pictures, drop your own image files into `sts2_coach_v3/art/` (name them like `foolish_shot.png`); they show next to the matching name and are never uploaded. This repo contains no game art.
+Floors show small icons (fight, elite, boss, campfire, shop, event, treasure, ancient). Card, relic and enemy names link to the Slay the Spire wiki (dotted underline). If you want pictures, drop your own image files into `sts2_coach_v3/art/` (name them like `foolish_shot.png`); they show next to the matching name and are never uploaded. Hover a name to see a larger picture and a short description (descriptions come from an optional `art/descriptions.json`). This repo contains no game art.
 
 Optional `settings.json` next to `sts2_coach_v3.py` to rename a character: `{"character_names": {"Fool": "RealName"}}`.
 
