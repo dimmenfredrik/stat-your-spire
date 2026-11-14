@@ -794,6 +794,91 @@ def card_pick_impact(runs, include_abandoned, min_offered=MIN_OFFERED, act_ids=N
     return rows, meta
 
 
+GAMEPLAN_RUNS = 20             # Next Run Gameplan looks at this many recent runs (unless a filter is on)
+GAMEPLAN_MIN_PICKS = 5         # Draft Watchlist needs this many picks per card
+SLOW_A1_GAMEPLAN = 3.8         # Act 1 hallway turns that count as "slow" for the gameplan
+
+
+def _act2_rewards(r):
+    rw = [f for f in r["floors"] if f["act"] == 2 and f["card_choices"] and f["map_type"] != "shop"]
+    skipped = sum(1 for f in rw if not any(p for _, p in f["card_choices"]))
+    return len(rw), skipped
+
+
+def gameplan_fixes(runs, include_abandoned):
+    """Score each candidate leak on the given runs; return the two biggest with a last-5 check.
+
+    Each check gives, per finished run, True (handled well), False (leaked) or None (not applicable).
+    """
+    decided = [r for r in sorted(runs, key=lambda r: r["start"], reverse=True)
+               if r["win"] or is_loss(r, include_abandoned)]
+
+    def a1_avg(r):
+        t = [f["turns"] for f in r["floors"] if f["act"] == 1 and f["room_type"] == "monster"]
+        return avg(t) if len(t) >= 3 else None
+
+    checks = [
+        dict(id="gold", title="Spend your gold",
+             check=lambda r: True if r["win"] else r["final_gold"] <= GOLD_LEAK_THRESHOLD,
+             detail=lambda bad, rs: (f"Died with {GOLD_LEAK_THRESHOLD}+ gold in {len(bad)}/{len(rs)} losses "
+                                     f"(avg {avg([r['final_gold'] for r in bad]):.0f})."),
+             target=f"Arrive at every boss and elite with ≤{GOLD_LEAK_THRESHOLD} gold: removal first, then one key card/relic.",
+             ok_word="spent gold well", scope="losses"),
+        dict(id="potions", title="Drink your potions",
+             check=lambda r: True if r["win"] else not r["unused_potions"],
+             detail=lambda bad, rs: (f"Died holding potions in {len(bad)}/{len(rs)} losses "
+                                     f"({', '.join(sorted({p for r in bad for p in r['unused_potions']})[:3])})."),
+             target="Use a potion the moment a fight will cost 40%+ HP - never die with a full belt.",
+             ok_word="used their potions", scope="losses"),
+        dict(id="slow_a1", title="Kill Act 1 hallways faster",
+             check=lambda r: None if a1_avg(r) is None else a1_avg(r) <= SLOW_A1_GAMEPLAN,
+             detail=lambda bad, rs: (f"{len(bad)}/{len(rs)} runs averaged >{SLOW_A1_GAMEPLAN} turns per Act 1 "
+                                     f"hallway fight (worst {max(a1_avg(r) for r in bad):.1f})."),
+             target=f"Take frontloaded damage with your first 3 card rewards; aim for ≤{SLOW_A1_GAMEPLAN} turns per hallway.",
+             ok_word="had fast Act 1 fights", scope="runs"),
+        dict(id="a2_skip", title="Skip more in Act 2",
+             check=lambda r: (None if _act2_rewards(r)[0] < 3 else _act2_rewards(r)[1] >= 1),
+             detail=lambda bad, rs: (f"Took a card from every Act 2 reward in {len(bad)}/{len(rs)} runs "
+                                     f"that saw 3+ Act 2 rewards."),
+             target="In Act 2, skip at least 1-2 rewards that don't add AoE, scaling or block.",
+             ok_word="skipped in Act 2", scope="runs"),
+        dict(id="lowhp", title="Don't enter fights low",
+             check=lambda r: (True if r["win"] else (None if _fatal_entry_hp(r) is None else _fatal_entry_hp(r) >= 0.5)),
+             detail=lambda bad, rs: (f"Entered the fight that killed you below 50% HP in {len(bad)}/{len(rs)} losses."),
+             target="Below 50% HP: rest at campfires and path around elites until you're healthy.",
+             ok_word="stayed healthy", scope="losses"),
+    ]
+    out = []
+    for c in checks:
+        res = [(r, c["check"](r)) for r in decided]
+        rel = [(r, v) for r, v in res if v is not None and (c["scope"] == "runs" or not r["win"])]
+        if len(rel) < 3:
+            continue
+        bad = [r for r, v in rel if v is False]
+        rate = pct(len(bad), len(rel))
+        if not bad or rate < 25:
+            continue
+        last5 = [v for _, v in res if v is not None][:5]
+        out.append(dict(id=c["id"], title=c["title"], rate=rate, detail=c["detail"](bad, [r for r, _ in rel]),
+                        target=c["target"], last5=last5, ok_word=c["ok_word"]))
+    out.sort(key=lambda x: -x["rate"])
+    return out[:2], len(decided)
+
+
+def draft_watchlist(runs, include_abandoned, min_picks=GAMEPLAN_MIN_PICKS):
+    rows, _ = card_pick_impact(runs, include_abandoned, min_offered=1)
+    ok = [x for x in rows if x["delta"] is not None and x["np"] >= min_picks and x["ns"] >= 1]
+    if not ok:
+        return None, None, 0
+    best = max(ok, key=lambda x: (x["delta"], x["np"]))
+    trap = min(ok, key=lambda x: (x["delta"], -x["np"]))
+    if best["delta"] <= 0:
+        best = None
+    if trap["delta"] >= 0 or (best and trap["card"] == best["card"]):
+        trap = None
+    return best, trap, len(ok)
+
+
 def card_detail(runs, include_abandoned, card):
     """Synergy breakdown for one card: deck-size split, co-picked partners, act-drafted split."""
     decided = [r for r in runs if r["win"] or is_loss(r, include_abandoned)]
@@ -1447,6 +1532,8 @@ class CoachApp(tk.Tk):
         habits, fine, wins, losses = habit_report(self.runs, inc)
         who = "this character" if self.character != ALL else "all characters"
 
+        self._gameplan_card(inner)
+
         if len(losses) < 2:
             box = tk.Frame(inner, bg=CARD, padx=22, pady=20)
             box.pack(fill="x", pady=(0, 12))
@@ -1454,16 +1541,6 @@ class CoachApp(tk.Tk):
             wrap_label(box, f"Play a few more runs with {who} and this page will rank the habits that "
                             f"keep ending your runs.", 10, fg=DIM).pack(fill="x", pady=(4, 0))
             return
-
-        # Focus banner
-        if habits:
-            top = habits[0]
-            ban = tk.Frame(inner, bg=FOCUS_BG, padx=22, pady=16)
-            ban.pack(fill="x", pady=(0, 14))
-            tk.Label(ban, text="YOUR #1 FOCUS RIGHT NOW", bg=FOCUS_BG, fg=ACCENT,
-                     font=(UI_FONT_SEMI, 8)).pack(anchor="w")
-            wrap_label(ban, top["h"]["title"], 17, bg=FOCUS_BG, font=disp(17)).pack(fill="x", pady=(2, 2))
-            wrap_label(ban, top["h"]["fix"][0], 10, bg=FOCUS_BG, fg=FG).pack(fill="x")
 
         wrap_label(inner, f"Run-killing habits  ·  based on {len(losses)} losses and {len(wins)} wins",
                    12, bg=BG, weight="bold").pack(fill="x", pady=(2, 2))
@@ -1492,6 +1569,94 @@ class CoachApp(tk.Tk):
                          font=(UI_FONT, 9), anchor="w").pack(anchor="w")
             for col in range(3):
                 chips.grid_columnconfigure(col, weight=1)
+
+    def _gameplan_card(self, parent):
+        """Compact 'Next Run Gameplan': 2 priority fixes with a last-5 check + 1 best / 1 trap card."""
+        inc = self.include_abandoned.get()
+        filtered = self.asc_filter.get() != "All" or self.range_filter != "All runs"
+        scope = self.runs if filtered else self.runs[:GAMEPLAN_RUNS]
+        fixes, n_dec = gameplan_fixes(scope, inc)
+        who = self.character if self.character != ALL else "all"
+        scope_txt = (f"current filter · {n_dec} finished runs" if filtered
+                     else f"last {min(GAMEPLAN_RUNS, len(self.runs))} {who} runs · {n_dec} finished")
+
+        card = tk.Frame(parent, bg=FOCUS_BG)
+        card.pack(fill="x", pady=(0, 18))
+        tk.Frame(card, bg=ACCENT, height=3).pack(fill="x")
+        body = tk.Frame(card, bg=FOCUS_BG, padx=20, pady=14)
+        body.pack(fill="x")
+        head = tk.Frame(body, bg=FOCUS_BG)
+        head.pack(fill="x", pady=(0, 10))
+        tk.Label(head, text="Next Run Gameplan", bg=FOCUS_BG, fg=FG, font=disp(15)).pack(side="left")
+        tk.Label(head, text=scope_txt, bg=FOCUS_BG, fg=FAINT, font=(UI_FONT, 9)).pack(side="left", padx=12, pady=(4, 0))
+
+        grid = tk.Frame(body, bg=FOCUS_BG)
+        grid.pack(fill="x")
+        for i in range(3):
+            grid.grid_columnconfigure(i, weight=1, uniform="gp")
+
+        # Priority fixes
+        for i in range(2):
+            cell = tk.Frame(grid, bg=CARD, padx=14, pady=12)
+            cell.grid(row=0, column=i, sticky="nsew", padx=(0, 10))
+            if i >= len(fixes):
+                tk.Label(cell, text=f"PRIORITY {i + 1}", bg=CARD, fg=FAINT, font=(UI_FONT_SEMI, 8)).pack(anchor="w")
+                wrap_label(cell, "No other leak above 25% in these runs - keep it up." if fixes or n_dec >= 3
+                           else "Not enough finished runs yet.", 10, fg=GOOD if n_dec >= 3 else DIM).pack(fill="x", pady=(4, 0))
+                continue
+            f = fixes[i]
+            top = tk.Frame(cell, bg=CARD)
+            top.pack(fill="x")
+            tk.Label(top, text=f"PRIORITY {i + 1}", bg=CARD, fg=ACCENT, font=(UI_FONT_SEMI, 8)).pack(side="left")
+            tk.Label(top, text=f"{f['rate']:.0f}% leak", bg=CARD, fg=BAD, font=(UI_FONT_SEMI, 8)).pack(side="right")
+            tk.Label(cell, text=f["title"], bg=CARD, fg=FG, font=disp(13)).pack(anchor="w", pady=(2, 2))
+            wrap_label(cell, f["detail"], 9, fg=DIM).pack(fill="x")
+            wrap_label(cell, "Target: " + f["target"], 9, fg=FG).pack(fill="x", pady=(4, 6))
+            chk = tk.Frame(cell, bg=CARD)
+            chk.pack(fill="x")
+            dots = tk.Frame(chk, bg=CARD)
+            dots.pack(side="left")
+            for v in reversed(f["last5"]):        # oldest -> newest
+                tk.Frame(dots, bg=GOOD if v else BAD, width=10, height=10).pack(side="left", padx=1)
+            ok_n = sum(1 for v in f["last5"] if v)
+            tk.Label(chk, text=f"  {ok_n}/{len(f['last5'])} recent runs {f['ok_word']}", bg=CARD,
+                     fg=GOOD if ok_n >= 4 else WARN if ok_n >= 2 else BAD, font=(UI_FONT, 9)).pack(side="left")
+
+        # Draft watchlist (from the Card Table data, current filters)
+        cell = tk.Frame(grid, bg=CARD, padx=14, pady=12)
+        cell.grid(row=0, column=2, sticky="nsew")
+        tk.Label(cell, text=f"DRAFT WATCHLIST  ·  {GAMEPLAN_MIN_PICKS}+ picks", bg=CARD, fg=ACCENT,
+                 font=(UI_FONT_SEMI, 8)).pack(anchor="w")
+        if self.character == ALL:
+            wrap_label(cell, "Pick a character in the sidebar to see which cards to look for and avoid.",
+                       10, fg=DIM).pack(fill="x", pady=(4, 0))
+            return
+        best, trap, n_ok = draft_watchlist(self.runs, inc)
+        if not best and not trap:
+            wrap_label(cell, f"No card has {GAMEPLAN_MIN_PICKS}+ picks with these filters yet.", 10,
+                       fg=DIM).pack(fill="x", pady=(4, 0))
+            return
+        for label, x, col in (("LOOK FOR", best, GOOD), ("AVOID", trap, BAD)):
+            row = tk.Frame(cell, bg=CARD_HI, padx=10, pady=7, cursor="hand2" if x else "")
+            row.pack(fill="x", pady=(6, 0))
+            top = tk.Frame(row, bg=CARD_HI)
+            top.pack(fill="x")
+            tk.Label(top, text=label, bg=CARD_HI, fg=col, font=(UI_FONT_SEMI, 8)).pack(side="left")
+            if not x:
+                tk.Label(row, text="nothing clear yet", bg=CARD_HI, fg=FAINT, font=(UI_FONT, 9)).pack(anchor="w")
+                continue
+            tk.Label(top, text=f"{x['delta']:+.0f}", bg=CARD_HI, fg=col, font=disp(12)).pack(side="right")
+            tk.Label(row, text=x["card"], bg=CARD_HI, fg=FG, font=(UI_FONT_SEMI, 11)).pack(anchor="w")
+            tk.Label(row, text=f"win {x['wr_p']:.0f}% taken · {x['wr_s']:.0f}% skipped · {x['np']} picks",
+                     bg=CARD_HI, fg=DIM, font=(UI_FONT, 8)).pack(anchor="w")
+            for wdg in [row] + list(row.winfo_children()) + list(top.winfo_children()):
+                wdg.bind("<Button-1>", lambda e, c=x["card"]: self.open_card(c))
+
+    def open_card(self, card):
+        """Jump to the Card Table with this card selected (biome reset to all acts)."""
+        self.biome = "All acts"
+        self.detail_card = card
+        self.set_view("Card Table")
 
     def _habit_card(self, parent, rank, it):
         h = it["h"]
