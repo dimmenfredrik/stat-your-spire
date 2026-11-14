@@ -14,6 +14,9 @@ Local web app, Windows, Python 3 (standard library only).
 If your runs aren't found, use *Change folder* in the sidebar. The history folder is
 `C:\Users\<you>\AppData\Roaming\SlayTheSpire2\steam\<steam id>\profile1\saves\history`.
 
+### Icons, wiki links and your own pictures
+Floors show small icons (fight, elite, boss, campfire, shop, event, treasure, ancient). Card, relic and enemy names link to the Slay the Spire wiki (dotted underline). If you want pictures, drop your own image files into `sts2_coach_v3/art/` (name them like `foolish_shot.png`); they show next to the matching name and are never uploaded. This repo contains no game art.
+
 Optional `settings.json` next to `sts2_coach_v3.py` to rename a character: `{"character_names": {"Fool": "RealName"}}`.
 
 ## History
@@ -23,5 +26,7 @@ Optional `settings.json` next to `sts2_coach_v3.py` to rename a character: `{"ch
 | final tkinter | `sts2_coach.py`, the reference original |
 | `sts2_coach_v2/` | pywebview HTML UI: Decisions, Missed Pairings, floor strip, turning points, Dashboard |
 | `sts2_coach_v3/` | pure local web app: match-history cards, grade tiles, Tailwind + Chart.js |
+
+This is an unofficial fan tool, not affiliated with or endorsed by Mega Crit.
 
 Use `git log` to walk through it. Personal paths and Steam ID were replaced with placeholders.

@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 settings.json
 *.log
+
+# optional local game art stays on your PC, never in the repo
+sts2_coach_v3/art/*
+!sts2_coach_v3/art/README.txt

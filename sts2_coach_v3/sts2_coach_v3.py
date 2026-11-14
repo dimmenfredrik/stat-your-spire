@@ -1888,6 +1888,23 @@ def run_server(api, port=8765):
                     self._send(200, fh.read(), "text/html; charset=utf-8")
             elif path == "/favicon.ico":
                 self._send(204, b"", "image/x-icon")
+            elif path == "/art-list":
+                art_dir = os.path.join(HERE, "art")
+                names = []
+                if os.path.isdir(art_dir):
+                    names = sorted(n for n in os.listdir(art_dir) if n.lower().endswith((".png", ".webp", ".jpg", ".jpeg", ".gif", ".svg")))
+                self._send(200, json.dumps(names).encode("utf-8"), "application/json")
+            elif path.startswith("/art/"):
+                from urllib.parse import unquote
+                name = os.path.basename(unquote(path[5:]))
+                full = os.path.join(HERE, "art", name)
+                ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+                types = {"png": "image/png", "webp": "image/webp", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "svg": "image/svg+xml"}
+                if ext in types and os.path.isfile(full):
+                    with open(full, "rb") as fh:
+                        self._send(200, fh.read(), types[ext])
+                else:
+                    self._send(404, b"not found", "text/plain")
             else:
                 self._send(404, b"not found", "text/plain")
 
