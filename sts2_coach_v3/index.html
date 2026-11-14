@@ -49,6 +49,12 @@
   .sw:checked { background: var(--accent); } .sw:checked::after { transform: translateX(14px); background: #12151b; }
   details > summary { list-style: none; cursor: pointer; } details > summary::-webkit-details-marker { display: none; }
   details[open] .car { transform: rotate(90deg); }
+  .hmore { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .25s ease; }
+  .hmore > div { overflow: hidden; }
+  article.open .hmore { grid-template-rows: 1fr; }
+  article.open .hcar { transform: rotate(90deg); }
+  .hab { transition: transform .15s ease, border-color .15s ease; }
+  .hab:hover { border-color: rgba(255,255,255,.18); }
 </style>
 <style>@keyframes pop{from{opacity:0;transform:scale(.88) translateY(8px)}to{opacity:1;transform:none}}.pop{animation:pop .16s ease-out}.artthumb{transition:transform .15s ease;transform-origin:left center}a:hover>.artthumb,.artthumb:hover{transform:scale(1.25)}</style>
 </head>
@@ -384,23 +390,30 @@ function viewHabits() {
     if (!f) return panel(`<div class="text-[11px] font-bold tracking-wider text-faint">PRIORITY ${i + 1}</div><div class="mt-2 text-good font-semibold">${G.n_dec >= 3 ? "Nothing above 25%" : "Not enough runs"}</div>`);
     const l10 = f.last10 || f.last5, ok = l10.filter(Boolean).length;
     return panel(`<div class="flex justify-between text-[11px] font-bold tracking-wider"><span class="text-[var(--accent)]">PRIORITY ${i + 1}</span><span class="${ok >= 7 ? "text-good" : ok >= 4 ? "text-warn" : "text-bad"}">${ok}/${l10.length} RECENT OK</span></div>
-      <div class="mt-2 text-lg font-bold">${esc(f.title)}</div>
+      <div class="mt-2 text-xl font-bold">${esc(f.title)}</div>
       <div class="flex gap-1 my-3">${[...l10].reverse().map(v => `<i class="h-5 flex-1 max-w-6 rounded ${v ? "bg-good/80" : "bg-bad"}"></i>`).join("")}</div>
-      <div class="text-xs text-dim">${esc(f.target)}</div>`, "accent-line");
+      <div class="text-[15px] text-ink leading-snug">${esc(f.target)}</div>`, "accent-line");
   }).join("");
   let out = `<div class="grid md:grid-cols-2 gap-4 mb-6">${cells}</div>`;
   if (H.n_losses < 2) return out + panel(`<div class="text-dim text-sm">Play a few more runs with this character to rank your habits.</div>`);
   const sev = {high: ["Major leak", "bg-bad text-[#12151b]", "#ff6b6b"], med: ["Leak", "bg-warn text-[#12151b]", "#ffb547"], low: ["Minor", "bg-info text-[#12151b]", "#6cb6ff"]};
-  out += `<div class="flex items-center justify-between mb-3"><h3 class="font-bold">Run-killing habits</h3><span class="text-xs text-faint num">${H.n_losses} losses · ${H.n_wins} wins</span></div>`;
+  out += `<div class="flex items-center justify-between mb-3"><h3 class="font-bold">Run-killing habits</h3><span class="text-xs text-faint num">Click a habit for all tips · ${H.n_losses} losses · ${H.n_wins} wins</span></div>`;
   out += H.items.map(it => {
     const [lbl, cls, col] = sev[it.sev];
     const bar = (name, v, c, cnt) => `<div class="flex items-center gap-3 text-xs"><span class="w-24 text-dim">${name}</span><div class="flex-1 h-2 rounded-full bg-card2 overflow-hidden"><i class="block h-full rounded-full" style="width:${Math.max(1, v || 0)}%;background:${c}"></i></div><span class="num w-20 text-right font-semibold">${num(v)}% <span class="text-faint font-normal">(${cnt})</span></span></div>`;
-    return `<article class="rounded-xl border border-line bg-card mb-3 overflow-hidden flex"><div class="w-1" style="background:${col}"></div><div class="flex-1 p-4">
-      <div class="flex items-center gap-3 flex-wrap"><span class="size-6 rounded-md bg-card2 grid place-items-center text-xs font-bold">${it.rank}</span><span class="font-bold">${esc(it.title)}</span><span class="rounded-full px-2.5 py-0.5 text-[10.5px] font-extrabold ${cls}">${lbl}</span></div>
-      <div class="mt-3 flex flex-col gap-1.5">${bar("In losses", it.loss_rate, col, it.loss_hits + "/" + it.loss_n)}${it.show_win_bar ? bar("In wins", it.win_rate, "#4fd18b", it.win_hits + "/" + it.win_n) : ""}</div>
-      <details class="mt-3"><summary class="text-[11px] font-bold tracking-wider text-[var(--accent)] flex items-center gap-1.5"><span class="car inline-block transition-transform">▸</span>TIPS (${it.fix.length})</summary>
-        <div class="mt-2 text-sm text-dim">${esc(it.why)}</div><ul class="mt-2 list-disc pl-5 text-sm text-dim space-y-1">${it.fix.map(t => `<li>${esc(t)}</li>`).join("")}</ul></details>
-      ${it.examples.length ? `<div class="mt-3 flex gap-2 flex-wrap">${it.examples.map(e => `<button data-goto="${esc(e.file)}" class="rounded-full border border-line bg-card2 px-3 py-1 text-xs text-info hover:border-info transition">${esc(e.label)}</button>`).join("")}</div>` : ""}
+    const isOpen = S.expandedHabits.has(it.title), more = it.fix.slice(1);
+    return `<article class="hab rounded-xl border border-line bg-card mb-3 overflow-hidden flex ${isOpen ? "open" : ""}"><div class="w-1" style="background:${col}"></div><div class="flex-1 p-5">
+      <div data-hab="${esc(it.title)}" class="cursor-pointer">
+        <div class="flex items-center gap-3 flex-wrap"><span class="size-7 rounded-md bg-card2 grid place-items-center text-sm font-bold">${it.rank}</span><span class="text-lg font-bold">${esc(it.title)}</span><span class="rounded-full px-2.5 py-0.5 text-[11px] font-extrabold ${cls}">${lbl}</span></div>
+        <div class="mt-3 flex items-baseline gap-x-6 gap-y-1 flex-wrap"><span><span class="num text-3xl font-extrabold" style="color:${col}">${num(it.loss_rate)}%</span> <span class="text-sm text-dim">of your losses (${it.loss_hits}/${it.loss_n})</span></span>${it.show_win_bar ? `<span><span class="num text-xl font-bold text-good">${num(it.win_rate)}%</span> <span class="text-sm text-dim">of your wins (${it.win_hits}/${it.win_n})</span></span>` : ""}</div>
+        <div class="mt-3 rounded-lg bg-good/10 border border-good/20 px-4 py-3 text-[17px] leading-snug text-ink"><span class="text-good font-bold mr-1">Do this:</span>${esc(it.fix[0] || it.why)}</div>
+        <div class="mt-3 flex items-center gap-1.5 text-xs font-bold tracking-wider text-[var(--accent)]"><span class="hcar inline-block transition-transform">▸</span>${more.length ? `${more.length} MORE TIP${more.length > 1 ? "S" : ""}` : "WHY"}${it.examples.length ? ` AND ${it.examples.length} RUN${it.examples.length > 1 ? "S" : ""}` : ""}</div>
+      </div>
+      <div class="hmore"><div>
+        <div class="pt-3 text-[15px] text-dim leading-snug">${esc(it.why)}</div>
+        ${more.length ? `<ul class="mt-3 space-y-2">${more.map((t, i) => `<li class="flex gap-3 text-[16px] leading-snug text-ink"><span class="shrink-0 size-6 rounded-full bg-good/15 text-good text-xs font-bold grid place-items-center mt-0.5">${i + 2}</span><span>${esc(t)}</span></li>`).join("")}</ul>` : ""}
+        ${it.examples.length ? `<div class="mt-4 flex gap-2 flex-wrap">${it.examples.map(e => `<button data-goto="${esc(e.file)}" class="rounded-full border border-line bg-card2 px-3 py-1 text-xs text-info hover:border-info transition">${esc(e.label)}</button>`).join("")}</div>` : ""}
+      </div></div>
     </div></article>`;
   }).join("");
   if (H.fine.length) out += `<div class="mt-5 flex flex-wrap gap-2">${H.fine.map(t => `<span class="rounded-full bg-good/10 text-good text-xs font-medium px-3 py-1">✓ ${esc(t)}</span>`).join("")}</div>`;
@@ -430,8 +443,9 @@ function toast(msg) {
   setTimeout(() => { el.style.transition = "opacity .4s"; el.style.opacity = 0; setTimeout(() => el.remove(), 400); }, 6000);
 }
 document.addEventListener("click", e => {
-  const t = e.target.closest("[data-char],[data-range],[data-tab],[data-feed],[data-more],[data-sort],[data-goto]");
+  const t = e.target.closest("[data-char],[data-range],[data-tab],[data-feed],[data-more],[data-sort],[data-goto],[data-hab]");
   if (!t) return;
+  if (t.dataset.hab !== undefined) { const k = t.dataset.hab, art = t.closest("article"); if (S.expandedHabits.has(k)) S.expandedHabits.delete(k); else S.expandedHabits.add(k); art && art.classList.toggle("open", S.expandedHabits.has(k)); return; }
   if (t.dataset.char !== undefined) { S.character = t.dataset.char; refresh(); }
   else if (t.dataset.range) { S.range = t.dataset.range; refresh(); }
   else if (t.dataset.tab) { S.tab = t.dataset.tab; renderTabs(); renderView(); }
