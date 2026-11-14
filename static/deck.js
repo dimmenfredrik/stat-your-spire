@@ -44,7 +44,7 @@ function deckHtml(r) {
   }
   const tile = e => {
     const k = artKey(e.n), file = ART.get(k);
-    const img = file ? `<img src="/art/${encodeURIComponent(file)}" alt="" loading="lazy" class="w-full h-28 object-cover rounded-lg ${e.u ? "ring-2 ring-[#d9b44a]" : ""}">`
+    const img = file ? `<img src="${artUrl(file)}" alt="" loading="lazy" class="w-full h-28 object-cover rounded-lg ${e.u ? "ring-2 ring-[#d9b44a]" : ""}">`
       : `<div class="w-full h-28 rounded-lg bg-card2 grid place-items-center text-xs text-faint px-2 text-center">${esc(e.n)}</div>`;
     const cost = e.cost === null ? "" : `<span class="absolute top-1 left-1 size-6 rounded-full bg-[#12151b]/90 border border-line grid place-items-center text-xs font-bold ${e.u && e.cost !== (INFO[k] || {}).cost ? "text-good" : "text-ink"}">${e.cost < 0 ? "X" : e.cost}</span>`;
     const cnt = e.count > 1 ? `<span class="absolute top-1 right-1 rounded-full bg-[#12151b]/90 border border-line px-1.5 text-xs font-bold text-ink">×${e.count}</span>` : "";
@@ -63,7 +63,7 @@ function deckHtml(r) {
       <div class="grid grid-cols-3 gap-2 content-start">${stat(total, "cards")}${stat(by("Attack"), "attacks")}${stat(by("Skill"), "skills")}${stat(by("Power"), "powers", hasMeta && !by("Power") ? "text-warn" : "")}${stat(upgraded, "upgraded")}${stat(avg === null ? "–" : avg.toFixed(1), "average cost")}</div>
       ${curve}</div>
     ${facts.length ? `<div class="mb-5 flex flex-wrap gap-2">${facts.map(([k, t]) => `<span class="rounded-full px-3 py-1 text-xs font-medium ${k === "good" ? "bg-good/10 text-good" : "bg-warn/15 text-warn"}">${esc(t)}</span>`).join("")}</div>` : ""}
-    ${hasMeta ? "" : `<div class="mb-4 text-xs text-faint">Card pictures, type and cost are only in the downloadable version (they are built from your own game files).</div>`}
+    ${hasMeta ? "" : `<div class="mb-4 text-xs text-faint">Card type and cost need the pictures library: start the coach once with the game installed.</div>`}
     ${groups}
     ${(r.relics_final || []).length ? `<div class="mt-2"><div class="mb-2 text-[11px] font-bold tracking-wider text-faint">RELICS · ${r.relics_final.length}</div><div class="flex flex-wrap gap-2">${r.relics_final.map(n => `<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[12px] bg-warn/15 text-warn">◆ ${wikiA(n, artImg(n, 34) + esc(n))}</span>`).join("")}</div></div>` : ""}`;
 }

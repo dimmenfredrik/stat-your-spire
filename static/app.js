@@ -16,6 +16,12 @@ const S = {character: ALL, asc: "All", range: "All runs", quits: false, coop: tr
            feedN: 12, open: new Set(), sort: {key: "lift", desc: true}, search: "", expandedHabits: new Set()};
 let D = null, busy = false, again = false, charts = {}, INIT = null;
 
+// character pictures (built from the player's own game files; absent -> the coloured dot is used)
+const charKey = n => String(n || "").toLowerCase().replace(/[^a-z]+/g, "");
+const charArt = (n, kind) => { const f = ART.get("char_" + kind + "_" + charKey(n)); return f ? `${artUrl(f)}` : ""; };
+/* icon sitting in a glowing ring in colour c (used by the character banner and the boss cards) */
+const halo = (url, ring, img, c) => `<span class="relative grid shrink-0 place-items-center" style="width:${ring}px;height:${ring}px;--h:${c}"><span class="absolute inset-0 rounded-full" style="border:2px solid color-mix(in srgb,var(--h) 60%,transparent);box-shadow:0 0 ${Math.round(ring / 3)}px color-mix(in srgb,var(--h) 50%,transparent),inset 0 0 ${Math.round(ring / 4)}px color-mix(in srgb,var(--h) 30%,transparent);background:radial-gradient(circle,color-mix(in srgb,var(--h) 22%,#14171d),transparent 75%)"></span><img src="${url}" alt="" style="height:${img}px;width:${img}px;filter:drop-shadow(0 4px 8px rgba(0,0,0,.6))" class="relative object-contain"></span>`;
+const charIcon = (n, px) => { const u = charArt(n, "icon"); return u ? `<img src="${u}" alt="" style="height:${px}px;width:${px}px" class="object-contain drop-shadow">` : ""; };
 function themeColor(name) {
   if (!name || name === ALL) return "#7d93b5";
   if (THEMES[name]) return THEMES[name];
@@ -50,9 +56,17 @@ const wikiA = (n, inner) => `<a data-tip="${esc(wikiName(n))}" href="${wikiUrl(w
 const wikiMulti = label => String(label).split(" / ").map(x => wikiA(x, `${artImg(wikiName(x), 36)}${esc(x)}`)).join(' <span class="text-faint">/</span> ');
 let ART = new Map();
 const artKey = n => String(n).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-const artImg = (n, px = 24) => { const f = ART.get(artKey(n)); return f ? `<img src="/art/${encodeURIComponent(f)}" alt="" style="height:${px}px;width:auto;max-width:${Math.round(px * 1.5)}px" data-art="/art/${encodeURIComponent(f)}" class="artthumb inline-block rounded-md object-contain align-middle mr-2 cursor-zoom-in">` : ""; };
+/* boss picture for a boss name (picked from whichever boss_* pictures exist, so every boss works) */
+const bossArt = n => {
+  const strip = x => x.replace(/^the_/, "");
+  const s = strip(artKey(String(n).replace(/\s*\((elite|weak|boss)\)\s*$/i, "")));
+  let best = "";
+  ART.forEach((f, k) => { if (!k.startsWith("boss_")) return; const b = strip(k.slice(5)); if (b === s || (b.length >= 4 && s.length >= 4 && (s.includes(b) || b.includes(s)))) { if (!best || b === s) best = f; } });
+  return best ? `${artUrl(best)}` : "";
+};
+const artImg = (n, px = 24) => { const f = ART.get(artKey(n)); return f ? `<img src="${artUrl(f)}" alt="" style="height:${px}px;width:auto;max-width:${Math.round(px * 1.5)}px" data-art="${artUrl(f)}" class="artthumb inline-block rounded-md object-contain align-middle mr-2 cursor-zoom-in">` : ""; };
 let INFO = {};
-async function loadArt() { if (window.WEB) { INFO = {}; ART = new Map(); return; } try { INFO = await (await fetch("/art-info")).json(); } catch (e) { INFO = {}; } await loadArtFiles(); }
+async function loadArt() { if (window.WEB) { await window.WEB_ART_READY; const a = window.webArt(); INFO = a.info; ART = new Map(a.list.map(f => [artKey(f.replace(/\.[^.]+$/, "")), f])); return; } try { INFO = await (await fetch("/art-info")).json(); } catch (e) { INFO = {}; } await loadArtFiles(); }
 async function loadArtFiles() { try { const r = await fetch("/art-list"); const l = await r.json(); ART = new Map(l.map(f => [artKey(f.replace(/\.[^.]+$/, "")), f])); } catch (e) { ART = new Map(); } }
 
 /* ================================================================= data */
@@ -84,8 +98,8 @@ function renderAll() {
 function renderSidebar() {
   $("#chars").innerHTML = D.sidebar.map(e => {
     const sel = e.name === S.character, c = e.name === ALL ? "#e9edf3" : themeColor(e.name);
-    return `<button data-char="${esc(e.name)}" class="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition ${sel ? "bg-card2 font-semibold" : "text-dim hover:bg-card"}" ${sel ? `style="box-shadow:inset 3px 0 0 ${c}"` : ""}>
-      <span class="size-2.5 rounded-full" style="background:${c}"></span><span class="flex-1 truncate">${esc(e.name)}</span>
+    return `<button data-char="${esc(e.name)}" class="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition ${sel ? "bg-card2 font-semibold" : "text-dim hover:bg-card"}" ${sel ? `style="box-shadow:inset 3px 0 0 ${c};background-image:linear-gradient(90deg,${hexA(c, .42)},transparent 90%)"` : e.name !== ALL && charArt(e.name, "icon") ? `style="background-image:linear-gradient(90deg,${hexA(c, .13)},transparent 70%)"` : ""}>
+      ${e.name !== ALL && charArt(e.name, "icon") ? `<span class="grid size-5 place-items-center">${charIcon(e.name, 20)}</span>` : `<span class="size-2.5 rounded-full" style="background:${c}"></span>`}<span class="flex-1 truncate">${esc(e.name)}</span>
       <span class="num text-xs text-faint">${e.w}-${e.l}</span><span class="num text-xs w-9 text-right font-semibold ${e.pct >= 25 ? "text-good" : "text-faint"}">${num(e.pct)}%</span></button>`;
   }).join("");
   const st = D.status;
@@ -98,6 +112,16 @@ function renderBanner() {
   $("#asc").innerHTML = D.asc_values.map(v => `<option ${v === S.asc ? "selected" : ""}>${esc(v)}</option>`).join("");
   $("#range").innerHTML = RANGES.map(r => `<button data-range="${r}" class="rounded-md px-3 py-1 text-sm font-medium transition ${r === S.range ? "bg-card2 text-[var(--accent)]" : "text-dim hover:text-ink"}">${r}</button>`).join("");
   $("#build").textContent = D.current_build ? "build " + D.current_build : "";
+  const dot = `<span class="size-3.5 rounded-full" style="background:var(--accent);box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 18%,transparent)"></span>`;
+  const chars = D.sidebar.filter(e => e.name !== ALL && charArt(e.name, "icon"));
+  $("#bannerIcon").innerHTML = S.character !== ALL ? (charArt(S.character, "icon") ? charIcon(S.character, 52) : dot)
+    : (chars.length ? `<span class="flex gap-1">${chars.map(e => charIcon(e.name, 32)).join("")}</span>` : dot);
+  const ic = S.character !== ALL ? charArt(S.character, "icon") : "";
+  const ba = $("#bannerArt");
+  ba.className = "pointer-events-none absolute inset-0" + (ic ? "" : " hidden");
+  ba.innerHTML = ic ? `<div class="absolute inset-0" style="background:radial-gradient(circle at 88% 50%,color-mix(in srgb,var(--accent) 45%,transparent),transparent 52%)"></div>
+    <img src="${ic}" alt="" class="absolute" style="right:-30px;top:-40px;height:260px;opacity:.09;filter:grayscale(1) brightness(2)">
+    <div class="absolute inset-y-0 flex items-center" style="right:48px">${halo(ic, 122, 98, "var(--accent)")}</div>` : "";
 }
 function renderTabs() {
   const tabs = [["focus", "Focus"], ["dash", "Dashboard"], ["habits", "Habits"], ["cards", "Cards"]];
@@ -206,7 +230,7 @@ function autopsyStory(r, file, tpOnly = false) {
       const tiles = f.card_choices.map(([n, p]) => {
         const file = ART.get(artKey(n));
         if (!file) return `<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] ${p ? "bg-good/15 text-good font-semibold" : "bg-card2 text-faint line-through"}">${p ? "✔ " : ""}${wikiA(n, esc(n))}</span>`;
-        return wikiA(n, `<span class="block w-[80px]"><img src="/art/${encodeURIComponent(file)}" alt="" loading="lazy" class="h-[52px] w-[80px] object-cover rounded-md ${p ? "ring-2 ring-good" : "opacity-40 grayscale"}"><span class="mt-0.5 block text-[11px] leading-tight ${p ? "text-good font-semibold" : "text-faint"}">${p ? "✔ " : ""}${esc(n)}</span></span>`)
+        return wikiA(n, `<span class="block w-[80px]"><img src="${artUrl(file)}" alt="" loading="lazy" class="h-[52px] w-[80px] object-cover rounded-md ${p ? "ring-2 ring-good" : "opacity-40 grayscale"}"><span class="mt-0.5 block text-[11px] leading-tight ${p ? "text-good font-semibold" : "text-faint"}">${p ? "✔ " : ""}${esc(n)}</span></span>`)
           .replace('class="underline', 'class="block no-underline ');
       });
       chips.push(`<div class="flex flex-wrap gap-2 items-start w-full mb-1">${tiles.join("")}${f.card_choices.some(c => c[1]) ? "" : `<span class="self-center text-[11px] font-semibold text-warn">skipped</span>`}</div>`);
@@ -352,7 +376,7 @@ function showTip(el, quiet) {
   const canUp = !!(info && info.up);
   const up = upView && !!(info && info.cost !== undefined);
   const img = artPrev.querySelector("img");
-  if (file) { img.src = "/art/" + encodeURIComponent(file); img.classList.remove("hidden"); } else img.classList.add("hidden");
+  if (file) { img.src = artUrl(file); img.classList.remove("hidden"); } else img.classList.add("hidden");
   img.style.boxShadow = up ? "0 0 0 2px #d9b44a, 0 0 22px rgba(217,180,74,.35)" : "none";
   const T = $("#apT"); T.textContent = name + (up ? "+" : ""); T.style.color = up ? "#e8c766" : "";
   const shown = (up && canUp ? info.up : text) || "";

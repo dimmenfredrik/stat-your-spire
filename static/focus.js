@@ -8,13 +8,15 @@ function dangerRow(d, big) {
   const plan = d.kind === "boss" ? "Plan your HP and potions for this boss before the act ends."
     : d.kind === "elite" ? "Optional fight: only take it when you are healthy."
     : "Costs a lot of HP: block earlier and use potions here.";
-  return `<div class="rounded-xl border border-line bg-card p-4">
-    <div class="flex items-center gap-2 flex-wrap"><span class="${big ? "text-lg" : "text-base"} font-bold">${wikiMulti(d.name.replace(/\s*\((elite|weak|BOSS)\)\s*$/i, ""))}</span><span class="rounded-full px-2.5 py-0.5 text-[10.5px] font-extrabold ${kc}">${kl}</span></div>
-    <div class="mt-2 flex items-baseline gap-x-5 gap-y-1 flex-wrap">
+  const pic = d.kind === "boss" ? bossArt(d.name) : "";
+  return `<div class="relative overflow-hidden rounded-xl border border-line bg-card p-4">
+    ${pic ? `<div class="pointer-events-none absolute inset-0" style="background:radial-gradient(circle at 92% 40%,rgba(255,107,107,.26),transparent 55%)"></div><div class="pointer-events-none absolute right-3 top-3">${halo(pic, 58, 44, "#ff6b6b")}</div>` : ""}
+    <div class="relative flex items-center gap-2 flex-wrap ${pic ? "pr-14" : ""}"><span class="${big ? "text-lg" : "text-base"} font-bold">${wikiMulti(d.name.replace(/\s*\((elite|weak|BOSS)\)\s*$/i, ""))}</span><span class="rounded-full px-2.5 py-0.5 text-[10.5px] font-extrabold ${kc}">${kl}</span></div>
+    <div class="relative mt-2 flex items-baseline gap-x-5 gap-y-1 flex-wrap ${pic ? "pr-14" : ""}">
       <span><span class="num ${big ? "text-3xl" : "text-2xl"} font-extrabold" style="color:${col}">${d.deaths}×</span> <span class="text-sm text-dim">killed you in ${d.n} meeting${d.n > 1 ? "s" : ""}</span></span>
       <span><span class="num text-xl font-bold text-ink">${d.avg_dmg}</span> <span class="text-sm text-dim">HP lost on average (${d.pct}% of max)</span></span></div>
     <div class="mt-2 h-2 rounded-full bg-card2 overflow-hidden"><i class="block h-full rounded-full" style="width:${Math.min(100, Math.max(2, d.pct))}%;background:${col}"></i></div>
-    <div class="mt-2 text-sm text-dim">${plan} <span class="text-faint">Worst fight: −${d.worst} HP.</span></div></div>`;
+    <div class="relative mt-2 text-sm text-dim">${plan} <span class="text-faint">Worst fight: −${d.worst} HP.</span></div></div>`;
 }
 function viewDanger() {
   const L = (D && D.danger) || [];
