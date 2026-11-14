@@ -6,3 +6,5 @@ settings.json
 # optional local game art stays on your PC, never in the repo
 sts2_coach_v3/art/*
 !sts2_coach_v3/art/README.txt
+sts2_coach_v4/art/*
+!sts2_coach_v4/art/README.txt
