@@ -28,8 +28,8 @@ from datetime import datetime
 # Configuration
 # --------------------------------------------------------------------------
 DEFAULT_HISTORY_DIR = (
-    r"C:\Users\YOU\AppData\Roaming\SlayTheSpire2\steam"
-    r"\YOUR_STEAM_ID\profile1\saves\history"
+    r"C:\Users\dimme\AppData\Roaming\SlayTheSpire2\steam"
+    r"\76561198826734184\profile1\saves\history"
 )
 POLL_MS = 3000                 # how often to check the folder for new .run files
 GOLD_LEAK_THRESHOLD = 150      # "died with >150 unspent gold"
@@ -47,7 +47,7 @@ COMBAT_TYPES = ("monster", "elite", "boss")
 
 CHAR_COLORS = {
     "Ironclad": "#ff7b7b", "Silent": "#9be37c", "Defect": "#86c8ff",
-    "Regent": "#ffc266", "Necrobinder": "#d3a6ff", "Fool": "#ff9fd0",
+    "Regent": "#ff9a52", "Necrobinder": "#d3a6ff", "Fool": "#ffe066",
 }
 FALLBACK_COLORS = ["#7fdbca", "#f78c6c", "#82aaff", "#c3e88d", "#ffcb6b"]
 
@@ -199,6 +199,7 @@ def parse_run(path, steam_id=None):
                 "room_type": room_type,
                 "is_combat": bool(combat_rooms),
                 "encounter": encounter,
+                "monster_ids": [str(m) for m in (combat_rooms[0].get("monster_ids") or [])] if combat_rooms else [],
                 "is_weak": bool(encounter and encounter.endswith("_WEAK")),
                 "label": label,
                 "turns": sum(int(r.get("turns_taken") or 0) for r in combat_rooms),
@@ -1026,8 +1027,22 @@ def danger_list(runs, inc, limit=10):
     out.sort(key=lambda x: (-x["deaths"], -x["pct"], -x["n"]))
     return out[:limit]
 
+def _end_foe(r):
+    """The last combat of a run: the fight that killed you, or the final boss you beat (for the pictures)."""
+    fl = r["floors"][-1] if r["floors"] else None
+    if not fl or not fl.get("is_combat"):
+        return "", "", ""
+    if not r["win"] and r.get("killer_id") != fl.get("encounter"):
+        return "", "", ""
+    mons = fl.get("monster_ids") or []
+    mon = mons[0].split(".")[-1].lower() if mons else ""
+    return mon, fl.get("room_type") or "", fl.get("label") or ""
+
+
 def run_brief(r):
+    foe, kind, foe_name = _end_foe(r)
     return {
+        "foe": foe, "foe_kind": kind, "foe_name": foe_name,
         "file": r["file"], "character": r["character"], "multiplayer": r["multiplayer"],
         "date": fmt_date(r["start"], "%d %b %H:%M"), "start": r["start"], "ascension": r["ascension"],
         "result": r["result"], "final_floor": r["final_floor"], "killer": "" if r["win"] else r["killer"],
@@ -1427,10 +1442,10 @@ def run_feed(runs, inc, pool, limit=60):
         badges = []
         lost = not r["win"] and not r["abandoned"]
         if lost and r["final_gold"] > GOLD_LEAK_THRESHOLD:
-            badges.append({"k": "gold", "label": f"{r['final_gold']}g GOLD"})
+            badges.append({"k": "gold", "label": f"{r['final_gold']}g GOLD", "n": r["final_gold"]})
         if lost and r["unused_potions"]:
             n = len(r["unused_potions"])
-            badges.append({"k": "potion", "label": f"{n} POTION{'S' if n != 1 else ''}"})
+            badges.append({"k": "potion", "label": f"{n} POTION{'S' if n != 1 else ''}", "n": n})
         ch = r["character"]
         if ch not in pairs:
             pairs[ch] = pair_table([x for x in pool if x["character"] == ch], False)
@@ -1438,7 +1453,7 @@ def run_feed(runs, inc, pool, limit=60):
             badges.append({"k": "pair", "label": "MISSED PAIR"})
         bleed = max([f["damage"] for f in r["floors"][:-1]] or [0])
         if bleed >= TP_BLEED:
-            badges.append({"k": "bleed", "label": f"-{bleed} HP"})
+            badges.append({"k": "bleed", "label": f"-{bleed} HP", "n": bleed})
         b = run_brief(r)
         b["badges"] = badges[:3]
         out.append(b)

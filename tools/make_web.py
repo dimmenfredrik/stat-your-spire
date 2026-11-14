@@ -20,7 +20,7 @@ for name in ("style.css", "deck.js", "focus.js"):
 shutil.copy(os.path.join(here, "web", "web.js"), os.path.join(out, "static", "web.js"))
 shutil.copy(os.path.join(here, "web", "preview.webp"), os.path.join(out, "static", "preview.webp"))
 shutil.copy(os.path.join(here, "web", "artworker.js"), os.path.join(out, "static", "artworker.js"))
-for name in ("extract_art_from_game.py", "card_values.py"):
+for name in ("extract_art_from_game.py", "card_values.py", "spine_art.py"):
     shutil.copy(os.path.join(src, name), os.path.join(out, "py", name))
 shutil.copy(os.path.join(here, "web", "web_art.py"), os.path.join(out, "py", "web_art.py"))
 

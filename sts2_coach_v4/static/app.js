@@ -1,7 +1,7 @@
 /* ================================================================= helpers */
 const ALL = "All characters";
 const RANGES = ["All runs", "Last 30", "Last 50", "Current build"];
-const THEMES = {Ironclad: "#e5484d", Silent: "#34d399", Defect: "#4c8dff", Necrobinder: "#a78bfa", Regent: "#f0b44c", Fool: "#f472b6"};
+const THEMES = {Ironclad: "#e5484d", Silent: "#34d399", Defect: "#4c8dff", Necrobinder: "#a78bfa", Regent: "#f97316", Fool: "#fde047"};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const num = (x, d = 0) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(d);
@@ -33,6 +33,38 @@ const PILL = {
 };
 const GRADE = {S: "bg-violet", A: "bg-good", B: "bg-info", C: "bg-warn", D: "bg-bad", N: "bg-card2 text-faint"};
 const pill = (k, label) => `<span class="rounded-full px-2.5 py-1 text-[10.5px] font-extrabold tracking-wide whitespace-nowrap ${PILL[k] || "bg-card2 text-dim"}">${esc(label)}</span>`;
+const SVG = (px, body, extra = "") => `<svg width="${px}" height="${px}" viewBox="0 0 16 16" aria-hidden="true" ${extra}>${body}</svg>`;
+const BADGE = {
+  gold: {cls: "bg-warn/15 text-warn", tip: n => n + " gold left unspent when you died",
+    svg: SVG(15, '<circle cx="8" cy="8" r="7" fill="#f5b83d" stroke="#b8821a" stroke-width="1.2"/><circle cx="8" cy="8" r="4.2" fill="none" stroke="#b8821a" stroke-width="1.1"/>')},
+  potion: {cls: "bg-info/15 text-info", tip: n => n + " unused potion" + (n === 1 ? "" : "s") + " when you died",
+    svg: SVG(15, '<path d="M6 2h4v3l3 7a2 2 0 0 1-2 3H5a2 2 0 0 1-2-3l3-7z" fill="#5ec8e8"/>')},
+  pair: {cls: "bg-violet/15 text-violet", tip: () => "Missed pair: you skipped a card that works well with one you already had",
+    svg: SVG(15, '<g fill="none" stroke="#b38cff" stroke-width="2" stroke-linecap="round"><path d="M6.5 9.5l3-3M5 8L3.5 9.5a2.1 2.1 0 0 0 3 3L8 11M11 8l1.5-1.5a2.1 2.1 0 0 0-3-3L8 5"/></g>')},
+  bleed: {cls: "bg-bad/15 text-bad", tip: n => "Your most expensive single fight cost " + n + " HP",
+    svg: SVG(15, '<path d="M8 14s-6-3.7-6-8a3.4 3.4 0 0 1 6-2.1A3.4 3.4 0 0 1 14 6c0 4.3-6 8-6 8z" fill="#ff5d6c"/>')},
+};
+const badgePill = b => { const d = BADGE[b.k]; if (!d) return pill(b.k, b.label);
+  const n = b.n != null ? b.n : parseInt(b.label, 10) || 0;
+  return `<span title="${esc(d.tip(n))}" class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-extrabold whitespace-nowrap ${d.cls}">${d.svg}${b.k === "pair" ? "" : `<span class="num">${n}</span>`}</span>`; };
+const TROPHY = '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h8v5a4 4 0 0 1-8 0zM8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8 20h8M10 17h4"/></svg>';
+/* ring with a small drawn icon inside (used when a picture is missing) */
+const haloIcon = (svg, ring, c) => `<span class="relative grid shrink-0 place-items-center" style="width:${ring}px;height:${ring}px;--h:${c}"><span class="absolute inset-0 rounded-full" style="border:2px solid color-mix(in srgb,var(--h) 60%,transparent);box-shadow:0 0 ${Math.round(ring / 3)}px color-mix(in srgb,var(--h) 50%,transparent),inset 0 0 ${Math.round(ring / 4)}px color-mix(in srgb,var(--h) 30%,transparent);background:radial-gradient(circle,color-mix(in srgb,var(--h) 22%,#14171d),transparent 75%)"></span><span class="relative">${svg}</span></span>`;
+const FOE_COL = {boss: "#ff6b6b", elite: "#ffb547", monster: "#a9b2c1"};
+/* the foe that ended a run (killer on a loss, final boss on a win): boss icon, else the rendered enemy picture, else a drawn icon */
+const enemyUrl = id => { const f = id ? ART.get("enemy_" + id) : ""; return f ? `/art/${encodeURIComponent(f)}` : ""; };
+function foeBlock(r) {
+  const win = r.result === "WIN";
+  if (r.result === "ABANDONED" || (!win && !r.foe && !r.killer)) return "";
+  const kind = r.foe_kind || (/\(boss\)/i.test(r.killer || "") ? "boss" : /\(elite\)/i.test(r.killer || "") ? "elite" : r.foe ? "monster" : "");
+  const raw = win ? (r.foe_name || r.foe || "") : (r.killer || "");
+  const name = String(raw).replace(/\s*\((elite|weak|boss)\)\s*$/i, "") || "–";
+  const col = win ? "#4ade80" : (FOE_COL[kind] || "#a9b2c1");
+  const url = (kind === "boss" && bossArt(name)) || enemyUrl(r.foe) || bossArt(name);
+  const tag = win ? `<div class="text-[10px] font-bold tracking-wider text-good">VICTORY</div>` : kind ? `<div class="text-[10px] font-bold tracking-wider" style="color:${col}">${kind === "monster" ? "FIGHT" : kind.toUpperCase()}</div>` : "";
+  const ring = !ART.size ? "" : url ? halo(url, 72, 56, col) : haloIcon(win ? TROPHY : `<span style="color:${col}">${ico(kind === "elite" ? "elite" : kind === "boss" ? "boss" : "monster", 30)}</span>`, 72, col);
+  return `<div class="flex shrink-0 items-center gap-3"><div class="text-right"><div class="text-[10px] font-semibold tracking-wider text-faint">${win ? "BEAT THE FINAL BOSS" : "KILLED BY"}</div><div class="text-base font-bold leading-snug">${esc(name)}</div>${tag}</div>${ring}</div>`;
+}
 const panel = (inner, cls = "") => `<section class="rounded-xl border border-line bg-card p-5 ${cls}">${inner}</section>`;
 const head = (title, tag = "") => `<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-bold tracking-wide">${esc(title)}</h3><span class="text-[10.5px] font-semibold tracking-wider text-faint">${esc(tag)}</span></div>`;
 
@@ -166,13 +198,16 @@ function viewDash() {
     const [lbl, cls, col] = RES[r.result];
     const cc = themeColor(r.character);
     const open = S.open.has(r.file);
-    return `<article class="rounded-xl border border-line bg-card overflow-hidden mb-2.5 transition hover:border-white/15" style="border-left:4px solid ${col}">
-      <button data-feed="${esc(r.file)}" class="relative w-full flex flex-wrap items-center gap-x-6 gap-y-2 pl-4 pr-12 py-3.5 text-left">
-        <div class="w-[92px] shrink-0"><div class="font-extrabold tracking-wide ${cls}">${lbl}</div><div class="num text-xs text-dim mt-0.5">Floor ${r.final_floor}</div></div>
-        <div class="flex items-center gap-2 shrink-0"><span class="rounded-md px-2 py-1 text-xs font-bold" style="background:${hexA(cc, .16)};color:${cc}">${esc(r.character)}</span>
-          <span class="rounded-md bg-card2 px-2 py-1 text-xs font-semibold text-dim">A${r.ascension}</span><span class="text-xs text-faint">${esc(r.date)}</span></div>
-        <div class="flex min-w-[190px] flex-1 items-center gap-2.5"><span class="grid w-9 shrink-0 place-items-center">${r.result !== "WIN" && bossArt(r.killer || "") ? halo(bossArt(r.killer), 36, 26, "#ff6b6b") : ""}</span><div><div class="text-[10px] font-semibold tracking-wider text-faint">${r.result === "WIN" ? "RESULT" : "KILLED BY"}</div><div class="font-semibold leading-snug">${r.result === "WIN" ? "Victory" : esc(r.killer || "–")}</div></div></div>
-        <div class="flex gap-1.5 flex-wrap justify-end">${r.badges.map(b => pill(b.k, b.label)).join("")}</div>
+    const cArt = charArt(r.character, "icon");
+    const fade = `linear-gradient(90deg,${hexA(col, r.result === "WIN" || r.result === "LOSS" ? .20 : .08)},${hexA(col, r.result === "ABANDONED" ? .03 : .07)} 35%,transparent 80%)`;
+    return `<article class="rounded-xl border border-line bg-card overflow-hidden mb-2.5 transition hover:border-white/15" style="border-left:4px solid ${col};background-image:${fade}">
+      <button data-feed="${esc(r.file)}" class="relative w-full flex flex-wrap items-center gap-x-4 gap-y-2 pl-4 pr-12 py-2.5 text-left">
+        ${cArt ? halo(cArt, 72, 54, cc) : ""}
+        <div class="w-[100px] shrink-0"><div class="font-extrabold tracking-wide text-[17px] ${cls}">${lbl}</div><div class="num text-xs text-dim mt-0.5">Floor ${r.final_floor}${cArt ? " · " + esc(r.character) : ""}</div></div>
+        <div class="flex shrink-0 flex-col items-start gap-1">${cArt ? "" : `<span class="rounded-md px-2 py-1 text-xs font-bold" style="background:${hexA(cc, .16)};color:${cc}">${esc(r.character)}</span>`}
+          <span class="rounded-md bg-card2 px-2 py-0.5 text-xs font-semibold text-dim">A${r.ascension}</span><span class="text-xs text-faint">${esc(r.date)}</span></div>
+        <div class="flex gap-1.5 flex-wrap justify-end ml-auto">${r.badges.map(badgePill).join("")}</div>
+        ${foeBlock(r)}
         <svg class="absolute right-4 top-1/2 -translate-y-1/2 size-5 text-dim shrink-0 transition-transform ${open ? "rotate-180" : ""}" id="chev-${cssId(r.file)}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 5 5-5"/></svg>
       </button>
       <div class="exp ${open ? "open" : ""}" id="exp-${cssId(r.file)}"><div><div id="body-${cssId(r.file)}" class="border-t border-line bg-side/60 p-5"></div></div></div></article>`;
