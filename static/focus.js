@@ -40,7 +40,7 @@ function runTip(x, k, ok) {
     <div class="flex justify-between text-[11px] font-extrabold tracking-wider"><span class="${ok ? "text-good" : "text-bad"}">${ok ? "KEPT" : "BROKEN"}</span><span class="text-faint">${when} · ${esc(x.date)}</span></div>
     <div class="mt-2 flex items-center gap-3">${ring}<div class="text-[13px] leading-snug"><div><b class="text-ink">${esc(x.character)}</b> <span class="text-dim">· floor ${x.final_floor}</span></div><div class="text-dim">${line}</div></div></div>${why}</div>`;
 }
-function reminderCard(p, i) {
+function histBlock(p) {
   const n = p.l10.length, ok = p.l10.filter(Boolean).length, last = n ? p.l10[0] : null;
   const col = !n ? "#8a93a6" : last ? "#3fbf7f" : "#ff6b6b";
   let streak = 0; while (streak < n && p.l10[streak] === p.l10[0]) streak++;
@@ -54,6 +54,10 @@ function reminderCard(p, i) {
       <div class="mt-0.5 text-right text-[17px] font-extrabold">${last ? "Kept" : "Broken"} ${streak} in a row</div>
       <div class="mt-1.5 flex gap-[3px]">${segs}</div>
       <div class="mt-1.5 flex items-baseline justify-between"><span class="text-xs text-faint">${ok} of last ${n} kept</span><b class="num text-sm" style="color:${col}">${Math.round(100 * ok / n)}%</b></div></div>` : "";
+  return {col, right, ev};
+}
+function reminderCard(p, i) {
+  const {col, right, ev} = histBlock(p);
   return `<section class="flex items-center gap-4 rounded-2xl border border-line bg-card p-5 mb-2.5" style="border-left:4px solid ${col};background-image:linear-gradient(90deg,${hexA(col, .10)},transparent 60%)">
     ${haloIcon(fixIcon(p.title, 28), 56, col)}
     <div class="min-w-0 flex-1"><div class="text-[10px] font-bold tracking-wider text-dim">REMINDER ${i + 1}</div>
@@ -72,14 +76,63 @@ function lastRunRow(r) {
     ${foeBlock(r)}
     <button data-goto="${esc(r.file)}" class="rounded-lg border border-line bg-card2 px-3.5 py-2 text-sm font-semibold transition hover:border-[var(--accent)]">Open run story</button></section>`;
 }
+/* "your one job": the biggest leak, with your win rate with vs without it */
+function jobPick() {
+  const G = (D && D.habits && D.habits.gameplan) || {fixes: []};
+  const f = (G.fixes || [])[0];
+  if (!f) return null;
+  return {f, p: {title: f.title, text: f.target, l10: f.last10 || f.last5 || [], runs: f.last10 ? f.last10_runs : f.last_runs}};
+}
+function splitBoxes(sp, big) {
+  if (!sp) return "";
+  const box = (v, c, l, n) => `<div class="rounded-xl text-center ${big ? "px-6 py-3 min-w-[230px]" : "px-4 py-2.5 min-w-[150px]"}" style="background:${hexA(c, .13)};border:1px solid ${hexA(c, .4)}"><div class="num font-extrabold leading-none ${big ? "text-[54px]" : "text-[28px]"}" style="color:${c}">${v}%</div><div class="${big ? "mt-1 text-base" : "mt-1 text-[11px]"} text-dim">wins when you ${esc(l)}</div><div class="${big ? "text-sm" : "text-[10px]"} text-faint">${n} runs</div></div>`;
+  return `<div class="flex shrink-0 gap-2.5">${box(sp.bad_wr, "#ff6b77", sp.bad_word, sp.bad_n)}${box(sp.ok_wr, "#4ade80", sp.ok_word, sp.ok_n)}</div>`;
+}
+function oneJob(j) {
+  const {f, p} = j, c = "#ef4d5a";
+  const {right} = histBlock(p);
+  return `<section class="mb-3 flex flex-wrap items-center gap-5 rounded-2xl p-5" style="border:1px solid ${hexA(c, .4)};background:linear-gradient(90deg,${hexA(c, .22)},${hexA(c, .06)} 55%,#1c2029)">
+    ${haloIcon(fixIcon(p.title, 36), 72, c)}
+    <div class="min-w-0 flex-1"><div class="text-[11px] font-extrabold tracking-[.16em] text-[#ff8a93]">YOUR ONE JOB NEXT RUN</div>
+      <div class="mt-0.5 text-[28px] font-extrabold leading-tight">${esc(p.title)}</div><div class="mt-1 text-sm leading-snug text-ink/90">${esc(p.text)}</div></div>
+    ${f.split ? splitBoxes(f.split, false) : (right || "")}</section>`;
+}
 function viewFocus() {
   const H = D.habits, G = H.gameplan || {fixes: []};
   const picks = [];
   (G.fixes || []).slice(0, 3).forEach(f => { const l = f.last10 || f.last5 || []; picks.push({title: f.title, text: f.target, l10: l, runs: f.last10 ? f.last10_runs : f.last_runs}); });
   (H.items || []).forEach(it => { if (picks.length < 3 && !picks.some(p => p.title === it.title) && it.fix && it.fix[0]) picks.push({title: it.title, text: it.fix[0], l10: [], runs: []}); });
-  const cards = picks.length ? picks.map(reminderCard).join("") : panel(`<div class="text-dim">Play a few more runs and your top reminders will show up here.</div>`);
+  const job = jobPick();
+  const rest = job ? picks.slice(1) : picks;
+  const cards = rest.length ? rest.map((p, i) => reminderCard(p, i + (job ? 1 : 0))).join("") : (job ? "" : panel(`<div class="text-dim">Play a few more runs and your top reminders will show up here.</div>`));
   const last = (D.feed || [])[0];
   const dg = ((D.danger || []).slice(0, 3));
   const dangerBox = dg.length ? `<div class="mt-6 mb-3 text-[12px] font-bold tracking-wider text-faint">WATCH OUT FOR</div><div class="grid gap-3 lg:grid-cols-3">${dg.map(d => dangerRow(d, false)).join("")}</div>` : "";
-  return `${last ? lastRunRow(last) : ""}${cards}${dangerBox}`;
+  return `${job ? oneJob(job) : ""}${last ? lastRunRow(last) : ""}${cards}${dangerBox}`;
 }
+
+/* second-monitor mode: big text, readable from across the desk. Leave with Esc. */
+function viewSecond() {
+  const job = jobPick(), G = (D.habits && D.habits.gameplan) || {fixes: []};
+  const last = (D.feed || [])[0], c = "#ef4d5a";
+  const fx2 = (G.fixes || [])[1], dg = (D.danger || [])[0];
+  const row = (col, icon, title, text, tag, tagc) => `<div class="flex items-center gap-5 rounded-3xl p-5" style="border-left:8px solid ${col};background:linear-gradient(90deg,${hexA(col, .22)},#161a22 70%)">${haloIcon(icon, 76, col)}<div class="min-w-0 flex-1"><div class="text-[30px] font-extrabold leading-tight">${esc(title)}</div><div class="text-lg text-dim">${esc(text)}</div></div><div class="text-xl font-extrabold" style="color:${tagc}">${tag}</div></div>`;
+  const second = fx2 ? row("#ffb547", fixIcon(fx2.title, 34), fx2.title, fx2.target, (fx2.last5 || [])[0] ? "KEPT LAST RUN" : "BROKEN LAST RUN", (fx2.last5 || [])[0] ? "#4ade80" : "#ff6b77") : "";
+  const danger = dg ? row("#a78bfa", BB_ICON.skull.replace(/16/g, "34"), "Watch out: " + dg.name.replace(/\s*\((elite|weak|boss)\)\s*$/i, ""), `Killed you ${dg.deaths} times · ${dg.avg_dmg} HP lost on average`, (dg.kind || "fight").toUpperCase(), "#ff6b77") : "";
+  const lastStrip = last ? `<div class="mt-4 flex flex-wrap items-center gap-5 rounded-3xl border border-line bg-[#161a22] px-6 py-4 text-xl"><span class="text-[15px] font-extrabold tracking-[.14em] text-faint">LAST RUN</span><b class="text-[26px] ${last.result === "WIN" ? "text-good" : "text-bad"}">${last.result === "WIN" ? "WIN" : last.result === "ABANDONED" ? "QUIT" : "LOSS"}</b><span class="text-dim">Floor ${last.final_floor} · ${esc(last.character)}${last.killer ? " · killed by " + esc(last.killer) : ""}</span></div>` : "";
+  const jobBlock = job
+    ? `<div class="flex flex-wrap items-center gap-8 rounded-[28px] p-8" style="border:2px solid ${hexA(c, .45)};background:linear-gradient(90deg,${hexA(c, .26)},${hexA(c, .06)} 60%,#161a22)">${haloIcon(fixIcon(job.p.title, 64), 132, c)}
+        <div class="min-w-0 flex-1"><div class="text-base font-extrabold tracking-[.2em] text-[#ff8a93]">YOUR ONE JOB THIS RUN</div><div class="my-1 text-[64px] font-black leading-[1.05]">${esc(job.p.title)}</div><div class="text-2xl text-dim">${esc(job.p.text)}</div></div>${splitBoxes(job.f.split, true)}</div>`
+    : `<div class="rounded-[28px] border border-line bg-[#161a22] p-8 text-2xl text-dim">Play a few more runs and your one job will show up here.</div>`;
+  return `<div class="mx-auto max-w-[1500px] p-8"><div class="mb-5 flex items-center gap-3 text-[15px] text-faint"><span class="size-2.5 rounded-full bg-good" style="box-shadow:0 0 10px #4ade80"></span>Watching for your next run · Second-monitor mode<button data-second-off class="ml-auto rounded-lg border border-line px-3 py-1.5 text-sm hover:bg-card">Leave (Esc)</button></div>
+    ${jobBlock}<div class="mt-4 grid gap-4 lg:grid-cols-2">${second}${danger}</div>${lastStrip}</div>`;
+}
+function renderSecond() {
+  let el = document.getElementById("second");
+  if (!S.second || !D) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement("div"); el.id = "second"; el.className = "fixed inset-0 z-[80] overflow-auto bg-[#0d1015]"; document.body.appendChild(el); }
+  el.innerHTML = viewSecond();
+}
+function leaveSecond() { S.second = false; const o = document.getElementById("optSecond"); if (o) o.checked = false; renderSecond(); }
+document.addEventListener("keydown", e => { if (e.key === "Escape" && S.second) leaveSecond(); });
+document.addEventListener("click", e => { if (e.target.closest("[data-second-off]")) leaveSecond(); });
