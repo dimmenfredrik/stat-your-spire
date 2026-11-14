@@ -53,6 +53,20 @@ const haloIcon = (svg, ring, c) => `<span class="relative grid shrink-0 place-it
 const FOE_COL = {boss: "#ff6b6b", elite: "#ffb547", monster: "#a9b2c1"};
 /* the foe that ended a run (killer on a loss, final boss on a win): boss icon, else the rendered enemy picture, else a drawn icon */
 const enemyUrl = id => { const f = id ? ART.get("enemy_" + id) : ""; return f ? `/art/${encodeURIComponent(f)}` : ""; };
+function enemyPic(foe, name, kind) {
+  if (kind === "boss") { const bp = bossArt(String(name || "")); if (bp) return bp; }   // the boss pictures look best
+  let u = enemyUrl(foe);
+  if (u) return u;
+  const cand = [foe, artKey(String(name || "").replace(/\s*\((elite|weak|boss)\)\s*$/i, ""))].filter(Boolean);
+  let best = "";
+  ART.forEach((f, k) => {
+    if (!k.startsWith("enemy_")) return;
+    const b = k.slice(6);
+    for (const c of cand) if ((c === b || c.startsWith(b + "_") || (b.length >= 5 && c.includes(b))) && b.length > best.length) best = b;
+  });
+  if (best) return enemyUrl(best);
+  return kind === "boss" ? bossArt(String(name || "")) : "";
+}
 function foeInfo(r) {
   const win = r.result === "WIN" || r.win === true;
   if (r.result === "ABANDONED" || (!win && !r.foe && !r.killer)) return null;
@@ -136,11 +150,16 @@ function renderAll() {
   document.documentElement.style.setProperty("--accent", col);
   renderSidebar(); renderBanner(); renderTabs(); renderView();
 }
+/* "All characters": six small squares, one in each character's colour */
+function allIcon() {
+  const cols = Object.values(THEMES);
+  return `<span class="grid size-5 place-items-center"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">${cols.map((c, i) => `<rect x="${1 + (i % 3) * 6.5}" y="${3 + Math.floor(i / 3) * 7}" width="5.5" height="6" rx="1.6" fill="${c}"/>`).join("")}</svg></span>`;
+}
 function renderSidebar() {
   $("#chars").innerHTML = D.sidebar.map(e => {
     const sel = e.name === S.character, c = e.name === ALL ? "#e9edf3" : themeColor(e.name);
     return `<button data-char="${esc(e.name)}" class="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition ${sel ? "bg-card2 font-semibold" : "text-dim hover:bg-card"}" ${sel ? `style="box-shadow:inset 3px 0 0 ${c};background-image:linear-gradient(90deg,${hexA(c, .42)},transparent 90%)"` : e.name !== ALL && charArt(e.name, "icon") ? `style="background-image:linear-gradient(90deg,${hexA(c, .13)},transparent 70%)"` : ""}>
-      ${e.name !== ALL && charArt(e.name, "icon") ? `<span class="grid size-5 place-items-center">${charIcon(e.name, 20)}</span>` : `<span class="size-2.5 rounded-full" style="background:${c}"></span>`}<span class="flex-1 truncate">${esc(e.name)}</span>
+      ${e.name !== ALL && charArt(e.name, "icon") ? `<span class="grid size-5 place-items-center">${charIcon(e.name, 20)}</span>` : e.name === ALL ? allIcon() : `<span class="size-2.5 rounded-full" style="background:${c}"></span>`}<span class="flex-1 truncate">${esc(e.name)}</span>
       <span class="num text-xs text-faint">${e.w}-${e.l}</span><span class="num text-xs w-9 text-right font-semibold ${e.pct >= 25 ? "text-good" : "text-faint"}">${num(e.pct)}%</span></button>`;
   }).join("");
   const st = D.status;
