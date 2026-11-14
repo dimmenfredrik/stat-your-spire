@@ -928,6 +928,7 @@ class CoachApp(tk.Tk):
         self.expanded = set()          # habit ids whose WHAT TO DO is open
         self._auto_expand = True
         self.min_picks = tk.IntVar(value=8)
+        self.killer_filter = None
 
         self._style()
         self._build()
@@ -1052,6 +1053,7 @@ class CoachApp(tk.Tk):
         self._build_stats()
         # View: autopsy
         self.autopsy_view = tk.Frame(self.content, bg=BG)
+        self.killer_bar = tk.Frame(self.autopsy_view, bg=BG)
         pane = tk.PanedWindow(self.autopsy_view, orient="horizontal", bg=BG, sashwidth=10,
                               borderwidth=0, sashrelief="flat")
         pane.pack(fill="both", expand=True)
@@ -1195,6 +1197,7 @@ class CoachApp(tk.Tk):
     def set_character(self, name):
         self.character = name
         self.selected_file = None
+        self.killer_filter = None
         self._apply_filter()
         self.refresh_views()
 
@@ -1465,6 +1468,7 @@ class CoachApp(tk.Tk):
         tk.Label(row, text=f"{(value or 0):.0f}%  ({count})", bg=CARD, fg=FG, font=(UI_FONT, 9)).pack(side="left")
 
     def open_autopsy(self, fname):
+        self.killer_filter = None
         self.selected_file = fname
         self.set_view("Run Autopsy")
         self._render_list()
@@ -1493,6 +1497,7 @@ class CoachApp(tk.Tk):
 
         right = tk.Frame(bar, bg=BG)
         right.pack(side="right")
+        self.stats_right = right
         self.min_val_lbl = tk.Label(right, text="", bg=BG, fg=ACCENT, font=(UI_FONT_SEMI, 10), width=3)
         self.min_val_lbl.pack(side="right")
         self.slider_var = tk.IntVar(value=8)
@@ -1549,6 +1554,10 @@ class CoachApp(tk.Tk):
         self.stats_tab = name
         for n, b in self.stats_tab_btns.items():
             b.configure(bg=CARD_HI if n == name else CARD, fg=ACCENT if n == name else DIM)
+        if name == "Overview":
+            self.stats_right.pack_forget()
+        elif not self.stats_right.winfo_ismapped():
+            self.stats_right.pack(side="right")
         for w in (self.guide_sf, self.overview_sf, self.table_frame):
             w.pack_forget()
         {"Draft Guide": self.guide_sf, "Overview": self.overview_sf,
@@ -1583,7 +1592,6 @@ class CoachApp(tk.Tk):
             b.pack(side="left", padx=1, pady=1)
             b.bind("<Button-1>", lambda e, n=name: self._set_biome(n))
         self.min_val_lbl.configure(text=str(self.slider_var.get()))
-        self.min_scale.configure(state="disabled" if self.stats_tab == "Overview" else "normal")
 
     def _biome_act_ids(self):
         if self.biome == "All acts":
@@ -1769,9 +1777,13 @@ class CoachApp(tk.Tk):
                        padx=(0 if c == 0 else 6, 0 if c + span >= 2 else 6), pady=(0, 12))
 
         # Fight speed table (full width)
-        p, b = self._panel(grid, "Fight speed by biome", "Average turns and damage per fight. Red = slower than target.")
+        p, b = self._panel(grid, "Fight speed by biome",
+                           "Average turns and damage per fight (red = slower than target). Win % = finished runs "
+                           "that went through that biome - for Act 1 that's the biome you started in.")
         place(p, 0, 0, 2)
-        heads = ["Biome", "Hallway turns", "Hallway dmg", "Elite turns", "Elite dmg", "Boss turns", "Boss dmg", "Fights"]
+        heads = ["Biome", "Hallway turns", "Hallway dmg", "Elite turns", "Elite dmg", "Boss turns", "Boss dmg",
+                 "Fights", "Win %"]
+        decided = [r for r in runs if r["win"] or is_loss(r, inc)]
         for j, h in enumerate(heads):
             tk.Label(b, text=h.upper(), bg=CARD, fg=FAINT, font=(UI_FONT_SEMI, 8)).grid(
                 row=0, column=j, sticky="w", padx=(0, 22), pady=(0, 4))
@@ -1795,7 +1807,20 @@ class CoachApp(tk.Tk):
                     tk.Label(b, text="-", bg=CARD, fg=FAINT).grid(row=i, column=col, sticky="w")
                 col += 2
             tk.Label(b, text=str(sum(len(v) for v in fd.values())), bg=CARD, fg=DIM,
-                     font=(UI_FONT, 10)).grid(row=i, column=7, sticky="w")
+                     font=(UI_FONT, 10)).grid(row=i, column=7, sticky="w", padx=(0, 22))
+            visited = [r for r in decided if any(f["act_id"] == act_id for f in r["floors"])]
+            if visited:
+                wins_here = sum(r["win"] for r in visited)
+                w_pct = pct(wins_here, len(visited))
+                overall = pct(len(a["wins"]), len(decided)) if decided else 0
+                wc = GOOD if w_pct >= overall + 5 else BAD if w_pct <= overall - 5 else FG
+                cell = tk.Frame(b, bg=CARD)
+                cell.grid(row=i, column=8, sticky="w")
+                tk.Label(cell, text=f"{w_pct:.0f}%", bg=CARD, fg=wc, font=(UI_FONT_SEMI, 10)).pack(side="left")
+                tk.Label(cell, text=f" ({wins_here}/{len(visited)})", bg=CARD, fg=FAINT,
+                         font=(UI_FONT, 9)).pack(side="left")
+            else:
+                tk.Label(b, text="-", bg=CARD, fg=FAINT).grid(row=i, column=8, sticky="w")
 
         # Card rewards by biome
         p, b = self._panel(grid, "Card rewards by biome", "How often you take a card, and skip rate in wins vs losses.")
@@ -1843,14 +1868,28 @@ class CoachApp(tk.Tk):
         if a["nemesis"]:
             top = a["nemesis"][0][1]
             for name, k in a["nemesis"][:8]:
-                row = tk.Frame(b, bg=CARD)
-                row.pack(fill="x", pady=2)
-                tk.Label(row, text=name, bg=CARD, fg=FG, font=(UI_FONT, 10), width=26, anchor="w").pack(side="left")
+                row = tk.Frame(b, bg=CARD, cursor="hand2")
+                row.pack(fill="x", pady=1)
+                nm = tk.Label(row, text=name, bg=CARD, fg=FG, font=(UI_FONT, 10), width=26, anchor="w",
+                              cursor="hand2")
+                nm.pack(side="left", padx=(4, 0), pady=1)
                 track = tk.Frame(row, bg=CARD, width=180, height=10)
                 track.pack(side="left", padx=6)
                 track.pack_propagate(False)
                 tk.Frame(track, bg=BAD, width=max(4, int(180 * k / top)), height=10).place(x=0, y=0)
-                tk.Label(row, text=str(k), bg=CARD, fg=DIM, font=(UI_FONT, 9)).pack(side="left")
+                cnt = tk.Label(row, text=str(k), bg=CARD, fg=DIM, font=(UI_FONT, 9))
+                cnt.pack(side="left")
+                arrow = tk.Label(row, text="view runs →", bg=CARD, fg=CARD, font=(UI_FONT, 8))
+                arrow.pack(side="right", padx=6)
+                parts = (row, nm, cnt, arrow, track)
+                for wdg in parts:
+                    wdg.bind("<Button-1>", lambda e, n=name: self.show_killer_runs(n))
+                    wdg.bind("<Enter>", lambda e, ps=parts, ar=arrow: (
+                        [x.configure(bg=CARD_HI) for x in ps], ar.configure(fg=INFO)))
+                    wdg.bind("<Leave>", lambda e, ps=parts, ar=arrow: (
+                        [x.configure(bg=CARD) for x in ps], ar.configure(fg=CARD)))
+            tk.Label(b, text="Click an enemy to see the runs it ended.", bg=CARD, fg=FAINT,
+                     font=(UI_FONT, 8)).pack(anchor="w", pady=(6, 0))
             wrap_label(b, "By act: " + "  ·  ".join(f"Act {k}: {v}" for k, v in sorted(a["death_act"].items()))
                        + "      By room: " + "  ·  ".join(f"{k} {v}" for k, v in a["death_room"].most_common()),
                        9, fg=FAINT).pack(fill="x", pady=(8, 0))
@@ -2027,25 +2066,64 @@ class CoachApp(tk.Tk):
         self._render_card_table()
 
     # ----- Autopsy view --------------------------------------------------
+    def show_killer_runs(self, killer):
+        """Jump to Run Autopsy showing only the losses this encounter caused."""
+        self.killer_filter = killer
+        self.selected_file = None
+        self.set_view("Run Autopsy")
+        self._render_list()
+
+    def clear_killer_filter(self):
+        self.killer_filter = None
+        self.selected_file = None
+        self._render_list()
+
+    def _list_runs(self):
+        if not self.killer_filter:
+            return self.runs
+        inc = self.include_abandoned.get()
+        return [r for r in self.runs if is_loss(r, inc) and r["killer"] == self.killer_filter]
+
+    def _render_killer_bar(self, n):
+        for c in self.killer_bar.winfo_children():
+            c.destroy()
+        if not self.killer_filter:
+            self.killer_bar.pack_forget()
+            return
+        if not self.killer_bar.winfo_ismapped():
+            self.killer_bar.pack(fill="x", pady=(0, 10), before=self.killer_bar.master.winfo_children()[1])
+        chip = tk.Frame(self.killer_bar, bg="#2b1a1d", padx=12, pady=6)
+        chip.pack(side="left")
+        tk.Label(chip, text="☠", bg="#2b1a1d", fg=BAD, font=(UI_FONT, 11)).pack(side="left")
+        tk.Label(chip, text=f"  Runs ended by {self.killer_filter}", bg="#2b1a1d", fg=FG,
+                 font=(UI_FONT_SEMI, 10)).pack(side="left")
+        tk.Label(chip, text=f"   {n} run{'s' if n != 1 else ''}", bg="#2b1a1d", fg=DIM,
+                 font=(UI_FONT, 9)).pack(side="left")
+        x = tk.Label(chip, text="   ✕ clear", bg="#2b1a1d", fg=INFO, font=(UI_FONT_SEMI, 9), cursor="hand2")
+        x.pack(side="left")
+        x.bind("<Button-1>", lambda e: self.clear_killer_filter())
+
     def _render_list(self):
         keep = self.selected_file
         cols = ("date", "char", "asc", "result", "floor", "killer")
         self.tree.configure(displaycolumns=cols if self.character == ALL
                             else tuple(c for c in cols if c != "char"))
         self.tree.delete(*self.tree.get_children())
-        for r in self.runs:
+        shown = self._list_runs()
+        self._render_killer_bar(len(shown))
+        for r in shown:
             date = datetime.fromtimestamp(r["start"]).strftime("%d %b %H:%M") if r["start"] else "?"
             char = r["character"] + (" (co-op)" if r["multiplayer"] else "")
             res = {"WIN": "✔ Win", "LOSS": "✖ Loss", "ABANDONED": "– Quit"}[r["result"]]
             self.tree.insert("", "end", iid=r["file"], tags=(r["result"],),
                              values=(date, char, r["ascension"], res, r["final_floor"],
                                      "" if r["win"] else r["killer"]))
-        target = keep if keep and self.tree.exists(keep) else (self.runs[0]["file"] if self.runs else None)
+        target = keep if keep and self.tree.exists(keep) else (shown[0]["file"] if shown else None)
         if target:
             self.tree.selection_set(target)
             self.tree.see(target)
             self.selected_file = target
-            self._render_autopsy(next((r for r in self.runs if r["file"] == target), None))
+            self._render_autopsy(next((r for r in shown if r["file"] == target), None))
         else:
             self._render_autopsy(None)
 
