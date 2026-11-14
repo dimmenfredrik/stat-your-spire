@@ -32,6 +32,9 @@ DEFAULT_HISTORY_DIR = (
 )
 POLL_MS = 3000                 # how often to check the folder for new .run files
 GOLD_LEAK_THRESHOLD = 150      # "died with >150 unspent gold"
+MIN_OFFERED = 8                # Card Pick Impact: only cards offered at least this often
+BLOAT_DECK = 28                # a final deck this size or larger counts as "bloated"
+TEMPO_FIGHTS = 4               # hallway fights measured after a pick
 SLOW_TURNS_BY_ACT = {1: 3.5, 2: 4.0, 3: 4.5}   # avg turns per normal fight
 SLOW_FIGHT_TURNS = 5           # a single hallway fight taking this many turns is "slow"
 BIG_HIT_FRACTION = 0.30        # a fight costing >=30% of max HP is a "big hit"
@@ -622,6 +625,92 @@ def card_insights(runs, include_abandoned):
     return best, worst
 
 
+def act_baselines(runs):
+    """Average turns per hallway (monster) fight, per act id, for the given runs."""
+    per = defaultdict(list)
+    for r in runs:
+        for f in r["floors"]:
+            if f["room_type"] == "monster" and f["is_combat"]:
+                per[f["act_id"]].append(f["turns"])
+    return {k: avg(v) for k, v in per.items()}
+
+
+def card_pick_impact(runs, include_abandoned, min_offered=MIN_OFFERED):
+    """Per-card draft impact using card_choices, turns_taken, cards_removed and final deck size.
+
+    Only finished runs (wins + losses) are used, so every number can be tied to a result.
+    """
+    decided = [r for r in runs if r["win"] or is_loss(r, include_abandoned)]
+    base = act_baselines(runs)
+    st = defaultdict(lambda: dict(offered=0, picks=0, np=0, wp=0, ns=0, ws=0, decks=[],
+                                  loss_decks=[], tempo=[], removed=0))
+    for r in decided:
+        fl = r["floors"]
+        offered_here, first_pick = set(), {}
+        for i, f in enumerate(fl):
+            if not f["card_choices"] or f["map_type"] == "shop":
+                continue
+            for name, picked in f["card_choices"]:
+                s = st[name]
+                s["offered"] += 1
+                offered_here.add(name)
+                if not picked:
+                    continue
+                s["picks"] += 1
+                first_pick.setdefault(name, i)
+                nxt = [g for g in fl[i + 1:] if g["room_type"] == "monster" and g["is_combat"]][:TEMPO_FIGHTS]
+                if nxt:
+                    s["tempo"].append(avg([g["turns"] - base.get(g["act_id"], g["turns"]) for g in nxt]))
+        for name in offered_here:
+            s = st[name]
+            if name in first_pick:
+                s["np"] += 1
+                s["wp"] += r["win"]
+                s["decks"].append(r["deck_size"])
+                if not r["win"]:
+                    s["loss_decks"].append(r["deck_size"])
+                # Buyer's remorse: removed later in the same run (capped by times picked)
+                picks_in_run = sum(1 for f in fl for n, p in f["card_choices"]
+                                   if p and n == name and f["map_type"] != "shop")
+                removed = sum(g["removed"].count(name) for g in fl[first_pick[name] + 1:])
+                s["removed"] += min(removed, picks_in_run)
+            else:
+                s["ns"] += 1
+                s["ws"] += r["win"]
+
+    losing_decks = [r["deck_size"] for r in decided if not r["win"]]
+    bloat_base = (sum(1 for d in losing_decks if d >= BLOAT_DECK) / len(losing_decks)) if losing_decks else 0
+    all_tempo = [t for s in st.values() for t in s["tempo"]]
+    tempo_base = avg(all_tempo) if all_tempo else 0.0
+    rows = []
+    for name, s in st.items():
+        if s["offered"] < min_offered:
+            continue
+        wr_p = pct(s["wp"], s["np"]) if s["np"] else None
+        wr_s = pct(s["ws"], s["ns"]) if s["ns"] else None
+        bloated = [d for d in s["loss_decks"] if d >= BLOAT_DECK]
+        rows.append(dict(
+            card=name, offered=s["offered"], picks=s["picks"], pick_pct=pct(s["picks"], s["offered"]),
+            np=s["np"], ns=s["ns"], wr_p=wr_p, wr_s=wr_s,
+            delta=(wr_p - wr_s) if wr_p is not None and wr_s is not None else None,
+            deck=avg(s["decks"]) if s["decks"] else None,
+            bloat=(len(s["loss_decks"]) >= 4 and len(bloated) / len(s["loss_decks"]) >= 0.6
+                   and len(bloated) / len(s["loss_decks"]) >= bloat_base + 0.15),
+            bloat_n=len(bloated), loss_n=len(s["loss_decks"]),
+            tempo=avg(s["tempo"]) if s["tempo"] else None, tempo_n=len(s["tempo"]),
+            removed=s["removed"],
+        ))
+    # Rank by lift shrunk toward 0 for small samples, so 1-pick flukes don't top the table
+    for x in rows:
+        n = min(x["np"], x["ns"])
+        x["score"] = x["delta"] * n / (n + 4) if x["delta"] is not None else None
+    rows.sort(key=lambda x: (x["score"] is not None, x["score"] or 0, x["offered"]), reverse=True)
+    deltas = [(x["delta"], min(x["np"], x["ns"])) for x in rows if x["delta"] is not None]
+    lift_base = (sum(d * n for d, n in deltas) / sum(n for _, n in deltas)) if deltas and sum(n for _, n in deltas) else 0.0
+    meta = dict(base=base, bloat_base=bloat_base, tempo_base=tempo_base, lift_base=lift_base)
+    return rows, meta
+
+
 def char_color(name, _cache={}):
     if name in CHAR_COLORS:
         return CHAR_COLORS[name]
@@ -739,6 +828,11 @@ class CoachApp(tk.Tk):
         self.view = VIEWS[0]
         self.selected_file = None
         self._last_seen = set()
+        self.asc_filter = tk.StringVar(value="All")
+        self.range_filter = "All runs"
+        self.current_build = ""
+        self.expanded = set()          # habit ids whose WHAT TO DO is open
+        self._auto_expand = True
 
         self._style()
         self._build()
@@ -763,6 +857,15 @@ class CoachApp(tk.Tk):
         st.map("Modern.Vertical.TScrollbar", background=[("active", FAINT)])
         st.configure("TEntry", fieldbackground=CARD, foreground=FG, insertcolor=FG,
                      bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, padding=6)
+        st.configure("Filter.TCombobox", fieldbackground=CARD, background=CARD, foreground=FG,
+                     arrowcolor=DIM, bordercolor=BORDER, lightcolor=CARD, darkcolor=CARD, padding=(8, 4))
+        st.map("Filter.TCombobox", fieldbackground=[("readonly", CARD)], foreground=[("readonly", FG)],
+               selectbackground=[("readonly", CARD)], selectforeground=[("readonly", FG)],
+               background=[("active", CARD_HI)])
+        self.option_add("*TCombobox*Listbox.background", CARD)
+        self.option_add("*TCombobox*Listbox.foreground", FG)
+        self.option_add("*TCombobox*Listbox.selectBackground", CARD_HI)
+        self.option_add("*TCombobox*Listbox.font", (UI_FONT, 10))
         st.configure("TCheckbutton", background=SIDEBAR, foreground=DIM, font=(UI_FONT, 9),
                      indicatorbackground=CARD, indicatorforeground=ACCENT, focuscolor=SIDEBAR)
         st.map("TCheckbutton", background=[("active", SIDEBAR)], foreground=[("active", FG)],
@@ -806,6 +909,25 @@ class CoachApp(tk.Tk):
         self.title_lbl.pack(side="left", padx=(6, 0))
         self.subtitle_lbl = tk.Label(header, text="", bg=BG, fg=DIM, font=(UI_FONT, 10))
         self.subtitle_lbl.pack(side="left", padx=14, pady=(8, 0))
+
+        fbar = tk.Frame(main, bg=BG)
+        fbar.pack(fill="x", padx=28, pady=(0, 10))
+        tk.Label(fbar, text="ASCENSION", bg=BG, fg=FAINT, font=(UI_FONT_SEMI, 8)).pack(side="left", padx=(0, 8))
+        self.asc_box = ttk.Combobox(fbar, textvariable=self.asc_filter, width=7, state="readonly",
+                                    values=["All"], style="Filter.TCombobox")
+        self.asc_box.pack(side="left")
+        self.asc_box.bind("<<ComboboxSelected>>", lambda e: (self.asc_box.selection_clear(), self._filters_changed()))
+        tk.Label(fbar, text="RUNS", bg=BG, fg=FAINT, font=(UI_FONT_SEMI, 8)).pack(side="left", padx=(24, 8))
+        self.range_pills = {}
+        pills = tk.Frame(fbar, bg=CARD)
+        pills.pack(side="left")
+        for opt in ("All runs", "Last 30", "Last 50", "Current build"):
+            p = tk.Label(pills, text=opt, bg=CARD, fg=DIM, font=(UI_FONT_SEMI, 9), padx=12, pady=5, cursor="hand2")
+            p.pack(side="left", padx=1, pady=1)
+            p.bind("<Button-1>", lambda e, o=opt: self._set_range(o))
+            self.range_pills[opt] = p
+        self.build_lbl = tk.Label(fbar, text="", bg=BG, fg=FAINT, font=(UI_FONT, 9))
+        self.build_lbl.pack(side="left", padx=12)
 
         self.cards_row = tk.Frame(main, bg=BG)
         self.cards_row.pack(fill="x", padx=28, pady=(4, 14))
@@ -903,7 +1025,8 @@ class CoachApp(tk.Tk):
         groups = defaultdict(list)
         for r in self.all_runs:
             groups[r["character"]].append(r)
-        entries = [(ALL, self.all_runs)] + sorted(groups.items(), key=lambda kv: -len(kv[1]))
+        entries = [(ALL, self._scope(self.all_runs))] + sorted(
+            ((k, self._scope(v)) for k, v in groups.items()), key=lambda kv: -len(kv[1]))
         for name, rs in entries:
             w = sum(1 for r in rs if r["win"])
             l = sum(1 for r in rs if is_loss(r, inc))
@@ -946,7 +1069,13 @@ class CoachApp(tk.Tk):
         wins = [r for r in rs if r["win"]]
         losses = [r for r in rs if is_loss(r, inc)]
         decided = wins + losses
-        self.subtitle_lbl.configure(text=f"{len(rs)} runs  ·  {len([r for r in rs if r['abandoned']])} abandoned")
+        filt = []
+        if self.asc_filter.get() != "All":
+            filt.append(self.asc_filter.get())
+        if self.range_filter != "All runs":
+            filt.append(self.range_filter.lower())
+        self.subtitle_lbl.configure(text=f"{len(rs)} runs  ·  {len([r for r in rs if r['abandoned']])} abandoned"
+                                         + (f"  ·  filtered: {', '.join(filt)}" if filt else ""))
         wr = pct(len(wins), len(decided))
         self._stat_card(self.cards_row, f"{wr:.0f}%", "Win rate", GOOD if wr >= 25 else WARN if wr >= 10 else BAD)
         self._stat_card(self.cards_row, f"{len(wins)}–{len(losses)}", "Wins – Losses")
@@ -1043,17 +1172,52 @@ class CoachApp(tk.Tk):
             if not self.include_multi.get():
                 runs = [r for r in runs if not r["multiplayer"]]
             self.all_runs = runs
+            newest = max(runs, key=lambda r: r["start"], default=None)
+            self.current_build = newest["build"] if newest else ""
             self.status.set(f"{len(runs)} runs loaded · updated {time.strftime('%H:%M:%S')}")
         if self.character != ALL and not any(r["character"] == self.character for r in self.all_runs):
             self.character = ALL
         self._apply_filter()
         self.refresh_views()
 
+    def _scope(self, rs):
+        """Apply the header filters (ascension, run range / build) to a list of runs."""
+        asc = self.asc_filter.get()
+        if asc != "All":
+            n = int(asc.strip("A+"))
+            rs = [r for r in rs if (r["ascension"] >= n if asc.endswith("+") else r["ascension"] == n)]
+        if self.range_filter == "Current build":
+            rs = [r for r in rs if r["build"] == self.current_build]
+        rs = sorted(rs, key=lambda r: r["start"], reverse=True)
+        if self.range_filter.startswith("Last "):
+            rs = rs[: int(self.range_filter.split()[1])]
+        return rs
+
     def _apply_filter(self):
         rs = self.all_runs if self.character == ALL else [r for r in self.all_runs if r["character"] == self.character]
-        self.runs = sorted(rs, key=lambda r: r["start"], reverse=True)
+        self.runs = self._scope(rs)
+
+    def _set_range(self, opt):
+        self.range_filter = opt
+        self._filters_changed()
+
+    def _filters_changed(self):
+        self._apply_filter()
+        self.refresh_views()
+
+    def _render_filters(self):
+        ascs = sorted({r["ascension"] for r in self.all_runs})
+        vals = ["All"] + [f"A{a}" for a in ascs] + [f"A{a}+" for a in ascs if a > 0]
+        self.asc_box["values"] = vals
+        if self.asc_filter.get() not in vals:
+            self.asc_filter.set("All")
+        for opt, p in self.range_pills.items():
+            on = opt == self.range_filter
+            p.configure(bg=CARD_HI if on else CARD, fg=ACCENT if on else DIM)
+        self.build_lbl.configure(text=f"current build {self.current_build}" if self.current_build else "")
 
     def refresh_views(self):
+        self._render_filters()
         self._render_sidebar()
         self._render_header()
         self._render_habits()
@@ -1097,6 +1261,9 @@ class CoachApp(tk.Tk):
             box.pack(fill="x", pady=(0, 12))
             wrap_label(box, "No recurring run-killing habit found. Nice!", 12, weight="bold", fg=GOOD).pack(fill="x")
 
+        if self._auto_expand and habits:
+            self.expanded.add(habits[0]["h"]["id"])
+            self._auto_expand = False
         for i, it in enumerate(habits, 1):
             self._habit_card(inner, i, it)
 
@@ -1149,11 +1316,31 @@ class CoachApp(tk.Tk):
                 and it.get("win_n"):
             nums += f"  Win rate with this habit {it['wr_with']:.0f}%, without {it['wr_without']:.0f}%."
         wrap_label(body, nums, 10, fg=INFO).pack(fill="x", pady=(6, 2))
-        wrap_label(body, h["why"], 10, fg=DIM).pack(fill="x", pady=(2, 8))
+        wrap_label(body, h["why"], 10, fg=DIM).pack(fill="x", pady=(2, 6))
 
-        tk.Label(body, text="WHAT TO DO", bg=CARD, fg=ACCENT, font=(UI_FONT_SEMI, 8)).pack(anchor="w")
+        hid = h["id"]
+        toggle = tk.Label(body, bg=CARD, fg=ACCENT, font=(UI_FONT_SEMI, 8), cursor="hand2")
+        toggle.pack(anchor="w")
+        tips = tk.Frame(body, bg=CARD)
+
+        def show(open_):
+            toggle.configure(text=("▾  WHAT TO DO" if open_ else f"▸  WHAT TO DO  ({len(h['fix'])} tips)"))
+            if open_:
+                tips.pack(fill="x", after=toggle, pady=(2, 0))
+            else:
+                tips.pack_forget()
+
+        def flip(_e=None):
+            if hid in self.expanded:
+                self.expanded.discard(hid)
+            else:
+                self.expanded.add(hid)
+            show(hid in self.expanded)
+
+        toggle.bind("<Button-1>", flip)
+        show(hid in self.expanded)
         for tip in h["fix"]:
-            row = tk.Frame(body, bg=CARD)
+            row = tk.Frame(tips, bg=CARD)
             row.pack(fill="x", pady=1)
             tk.Label(row, text="→", bg=CARD, fg=ACCENT, font=(UI_FONT_SEMI, 10)).pack(side="left", anchor="n")
             wrap_label(row, tip, 10, pad=10).pack(side="left", fill="x", expand=True, padx=(8, 0))
@@ -1270,6 +1457,8 @@ class CoachApp(tk.Tk):
         else:
             w("  Nothing has killed you yet here.\n", "good")
 
+        self._card_impact_section(w, runs, inc)
+
         best, worst = card_insights(runs, inc)
         if best or worst:
             w("Card insights (cards you added, by final-deck win rate)\n", "h2")
@@ -1283,6 +1472,82 @@ class CoachApp(tk.Tk):
                     w(f"    {c:<28}0/{n} won\n", "dim")
             w("  Small samples - treat as hints, not rules.\n", "faint")
         t.configure(state="disabled")
+
+    def _card_impact_section(self, w, runs, inc):
+        rows, meta = card_pick_impact(runs, inc)
+        base, tb, lb = meta["base"], meta["tempo_base"], meta["lift_base"]
+        w("Card Pick Impact\n", "h2")
+        w(f"  Cards offered {MIN_OFFERED}+ times in card rewards (shops excluded), finished runs only. "
+          f"Sorted by win-rate lift (weighted by sample size).\n", "dim", "ui")
+        if base:
+            w("  Act baselines (avg turns per hallway fight): "
+              + "   ".join(f"{pretty_act(k)} {v:.2f}" for k, v in
+                          sorted(base.items(), key=lambda kv: ACT_ORDER.index(kv[0]) if kv[0] in ACT_ORDER else 99))
+              + "\n", "faint", "ui")
+        if not rows:
+            w(f"  No card has been offered {MIN_OFFERED}+ times with the current filters.\n", "dim")
+            return
+        hdr = (f"  {'Card':<22}{'Offered':>8}{'Pick%':>7}{'WR picked':>12}{'WR skipped':>12}{'Lift':>7}"
+               f"{'Avg deck':>10}{'Tempo':>8}{'Removed':>9}   Flags\n")
+        w(hdr, "faint")
+        lifters, overdrafts = [], []
+        for x in rows:
+            w(f"  {x['card'][:21]:<22}", "bold")
+            w(f"{x['offered']:>8}")
+            w(f"{x['pick_pct']:>6.0f}%", "warn" if x["pick_pct"] >= 75 else "")
+            wrp = f"{x['wr_p']:.0f}% ({x['np']})" if x["wr_p"] is not None else "-"
+            wrs = f"{x['wr_s']:.0f}% ({x['ns']})" if x["wr_s"] is not None else "-"
+            w(f"{wrp:>12}")
+            w(f"{wrs:>12}", "dim")
+            d = x["delta"]
+            dtag = "" if d is None else "good" if d - lb >= 10 else "bad" if d - lb <= -10 else "dim"
+            w(f"{('-' if d is None else f'{d:+.0f}'):>7}", dtag)
+            deck = "-" if x["deck"] is None else f"{x['deck']:.1f}"
+            w(f"{deck:>10}", "bad" if x["bloat"] else ("warn" if x["deck"] and x["deck"] >= BLOAT_DECK else ""))
+            t = x["tempo"]
+            ttag = "" if t is None else "good" if t - tb <= -0.4 else "bad" if t - tb >= 0.4 else "dim"
+            w(f"{('-' if t is None else f'{t:+.2f}'):>8}", ttag)
+            w(f"{x['removed']:>9}", "warn" if x["removed"] >= 2 else "dim")
+            flags = []
+            if d is not None and d - lb >= 10 and x["np"] >= 3:
+                flags.append(("LIFTS WR", "good"))
+                lifters.append(x)
+            if d is not None and d - lb <= -10 and x["pick_pct"] >= 40 and x["np"] >= 3:
+                flags.append(("OVER-DRAFTED", "bad"))
+                overdrafts.append(x)
+            if x["bloat"]:
+                flags.append((f"BLOAT {x['bloat_n']}/{x['loss_n']}", "bad"))
+            if t is not None and x["tempo_n"] >= 3:
+                if t - tb >= 0.4:
+                    flags.append(("SLOWS DECK", "warn"))
+                elif t - tb <= -0.4:
+                    flags.append(("SPEEDS UP", "good"))
+            if x["removed"] >= 2 or (x["picks"] and x["removed"] / x["picks"] >= 0.3 and x["removed"] >= 1):
+                flags.append(("REGRET", "warn"))
+            w("   ")
+            for label, tag in flags:
+                w(f"{label}  ", tag)
+            w("\n")
+        w(f"  Lift = WR picked − WR skipped (run-level). Your typical card shows {lb:+.0f} (longer runs see and pick more "
+          f"cards), so LIFTS WR / OVER-DRAFTED flag cards 10+ points above/below that.\n", "faint", "ui")
+        w("  Tempo = avg turns in the next "
+          f"{TEMPO_FIGHTS} hallway fights after picking it, vs that act's baseline (negative = faster).\n"
+          f"  A typical pick scores {tb:+.2f} (decks get faster as an act goes on), so SPEEDS UP / SLOWS DECK "
+          f"flag cards 0.4+ turns better/worse than that.\n"
+          f"  Avg deck = final deck size in runs where you picked it.  BLOAT = 60%+ of its losing runs ended with "
+          f"{BLOAT_DECK}+ cards (your overall rate: {meta['bloat_base']:.0%}).  Removed = times you later "
+          f"removed it in the same run.\n", "faint", "ui")
+        if lifters or overdrafts:
+            w("  Takeaways\n", "bold")
+            for x in sorted(lifters, key=lambda x: -x["delta"])[:3]:
+                w(f"    ✔ {x['card']}: ", "good")
+                w(f"you win {x['wr_p']:.0f}% when you take it vs {x['wr_s']:.0f}% when you don't - "
+                  f"consider taking it more (picked {x['pick_pct']:.0f}% now).\n", "ui")
+            for x in sorted(overdrafts, key=lambda x: x["delta"])[:3]:
+                w(f"    ✖ {x['card']}: ", "bad")
+                w(f"picked {x['pick_pct']:.0f}% of the time, but its lift ({x['delta']:+.0f}) is well below your "
+                  f"typical card ({lb:+.0f}) - try skipping it unless it fills a clear need.\n", "ui")
+        w("  Small samples - a card needs many offers before these numbers mean much.\n", "faint", "ui")
 
     # ----- Autopsy view --------------------------------------------------
     def _render_list(self):
