@@ -15,6 +15,10 @@ const S = {character: ALL, asc: "All", range: "All runs", quits: false, coop: tr
            feedN: 12, open: new Set(), sort: {key: "lift", desc: true}, search: "", expandedHabits: new Set()};
 let D = null, busy = false, again = false, charts = {}, INIT = null;
 
+// character pictures (built from the player's own game files; absent -> the coloured dot is used)
+const charKey = n => String(n || "").toLowerCase().replace(/[^a-z]+/g, "");
+const charArt = (n, kind) => { const f = ART.get("char_" + kind + "_" + charKey(n)); return f ? `/art/${encodeURIComponent(f)}` : ""; };
+const charIcon = (n, px) => { const u = charArt(n, "icon"); return u ? `<img src="${u}" alt="" style="height:${px}px;width:${px}px" class="object-contain drop-shadow">` : ""; };
 function themeColor(name) {
   if (!name || name === ALL) return "#7d93b5";
   if (THEMES[name]) return THEMES[name];
@@ -84,7 +88,7 @@ function renderSidebar() {
   $("#chars").innerHTML = D.sidebar.map(e => {
     const sel = e.name === S.character, c = e.name === ALL ? "#e9edf3" : themeColor(e.name);
     return `<button data-char="${esc(e.name)}" class="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition ${sel ? "bg-card2 font-semibold" : "text-dim hover:bg-card"}" ${sel ? `style="box-shadow:inset 3px 0 0 ${c}"` : ""}>
-      <span class="size-2.5 rounded-full" style="background:${c}"></span><span class="flex-1 truncate">${esc(e.name)}</span>
+      ${e.name !== ALL && charArt(e.name, "icon") ? `<span class="grid size-5 place-items-center">${charIcon(e.name, 20)}</span>` : `<span class="size-2.5 rounded-full" style="background:${c}"></span>`}<span class="flex-1 truncate">${esc(e.name)}</span>
       <span class="num text-xs text-faint">${e.w}-${e.l}</span><span class="num text-xs w-9 text-right font-semibold ${e.pct >= 25 ? "text-good" : "text-faint"}">${num(e.pct)}%</span></button>`;
   }).join("");
   const st = D.status;
@@ -97,6 +101,14 @@ function renderBanner() {
   $("#asc").innerHTML = D.asc_values.map(v => `<option ${v === S.asc ? "selected" : ""}>${esc(v)}</option>`).join("");
   $("#range").innerHTML = RANGES.map(r => `<button data-range="${r}" class="rounded-md px-3 py-1 text-sm font-medium transition ${r === S.range ? "bg-card2 text-[var(--accent)]" : "text-dim hover:text-ink"}">${r}</button>`).join("");
   $("#build").textContent = D.current_build ? "build " + D.current_build : "";
+  const dot = `<span class="size-3.5 rounded-full" style="background:var(--accent);box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 18%,transparent)"></span>`;
+  const chars = D.sidebar.filter(e => e.name !== ALL && charArt(e.name, "icon"));
+  $("#bannerIcon").innerHTML = S.character !== ALL ? (charArt(S.character, "icon") ? charIcon(S.character, 52) : dot)
+    : (chars.length ? `<span class="flex gap-1">${chars.map(e => charIcon(e.name, 32)).join("")}</span>` : dot);
+  const por = S.character !== ALL ? charArt(S.character, "portrait") : "";
+  const ba = $("#bannerArt");
+  ba.classList.toggle("hidden", !por);
+  ba.innerHTML = por ? `<img src="${por}" alt="" class="h-full w-full rounded-xl object-cover ring-1 ring-white/15 shadow-lg">` : "";
 }
 function renderTabs() {
   const tabs = [["focus", "Focus"], ["dash", "Dashboard"], ["habits", "Habits"], ["cards", "Cards"]];
