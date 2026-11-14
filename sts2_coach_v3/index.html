@@ -113,7 +113,7 @@
     </div>
   </div>
 </div>
-<div id="artPrev" class="hidden fixed z-[60] pointer-events-none w-[290px] rounded-xl border border-line bg-card p-3 shadow-2xl"><img alt="" class="hidden w-full max-h-[320px] object-contain rounded-lg mb-2"><div id="apT" class="font-bold text-base"></div><div id="apD" class="mt-1 text-[15px] text-ink leading-snug"></div><div id="apH" class="mt-2 pt-2 border-t border-line text-xs text-faint"></div></div>
+<div id="artPrev" class="hidden fixed z-[60] pointer-events-none w-[290px] rounded-xl border border-line bg-card p-3 shadow-2xl"><img alt="" class="hidden w-full max-h-[320px] object-contain rounded-lg mb-2"><div id="apT" class="font-bold text-base"></div><div id="apM" class="text-xs text-dim mt-0.5"></div><div id="apD" class="mt-1 text-[15px] text-ink leading-snug"></div><div id="apH" class="mt-2 pt-2 border-t border-line text-xs text-faint"></div></div>
 <div id="toast" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2"></div>
 
 <script>
@@ -449,14 +449,27 @@ function showTip(el, quiet) {
   if (!file && !text) return;
   tipFor = el;
   const canUp = !!(info && info.up);
-  const up = upView && !!text;
+  const up = upView && !!(info && info.cost !== undefined);
   const img = artPrev.querySelector("img");
   if (file) { img.src = "/art/" + encodeURIComponent(file); img.classList.remove("hidden"); } else img.classList.add("hidden");
   img.style.boxShadow = up ? "0 0 0 2px #d9b44a, 0 0 22px rgba(217,180,74,.35)" : "none";
   const T = $("#apT"); T.textContent = name + (up ? "+" : ""); T.style.color = up ? "#e8c766" : "";
-  $("#apD").textContent = (up && canUp ? info.up : text) || "";
-  $("#apH").innerHTML = (text ? `Hold <kbd class="px-1 rounded bg-card2 border border-line">Shift</kbd> to see the upgraded version` +
-    (up && !canUp ? `<div class="mt-1">Upgrades usually raise the numbers. The exact values are on the wiki page: click the name.</div>` : "") : "") +
+  const shown = (up && canUp ? info.up : text) || "";
+  if (up && canUp) {
+    const a = text.split(" "), b = shown.split(" ");
+    $("#apD").innerHTML = a.length === b.length ? b.map((w, i) => w !== a[i] ? `<b style="color:#6ee7a0">${esc(w)}</b>` : esc(w)).join(" ")
+      : `<span style="color:#6ee7a0">${esc(shown)}</span>`;
+  } else $("#apD").textContent = shown;
+  const bits = [];
+  if (info && info.type) bits.push(esc(info.type));
+  if (info && info.rarity && info.rarity !== "None") bits.push(esc(info.rarity));
+  if (info && info.cost !== undefined) {
+    const c = v => v < 0 ? "X" : v, base = c(info.cost);
+    bits.push(up && info.up_cost !== undefined ? `<span style="color:#6ee7a0">${c(info.up_cost)} Energy</span> <span class="text-faint">(was ${base})</span>` : `${base} Energy`);
+  }
+  $("#apM").innerHTML = bits.join(" · ");
+  $("#apH").innerHTML = (info && info.cost !== undefined ? `Hold <kbd class="px-1 rounded bg-card2 border border-line">Shift</kbd> to see the upgraded version` +
+    (up && !canUp && info.up_cost === undefined ? `<div class="mt-1">This card gets no change from upgrading beyond what the wiki lists.</div>` : "") : "") +
     `<div class="mt-1">Click the name to open the wiki page</div>`;
   artPrev.classList.remove("hidden", "pop"); if (!quiet) { void artPrev.offsetWidth; artPrev.classList.add("pop"); }
 }

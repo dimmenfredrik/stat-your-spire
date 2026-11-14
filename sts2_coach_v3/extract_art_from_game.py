@@ -154,6 +154,61 @@ def clean(t, upgraded=False):
     return re.sub(r"\s+", " ", t).strip()
 
 
+def num(x):
+    return str(int(x)) if float(x) == int(x) else str(x)
+
+
+def render(raw, vals, upgraded=False):
+    """Description with the card's real base numbers filled in (vals = {placeholder name: number})."""
+    t = resolve_upgrade(raw, upgraded)
+
+    def pl(m):
+        v = vals.get(m.group(1))
+        return None if v is None else (m.group(2) if v == 1 else m.group(3))
+    t = re.sub(r"\{(\w+):plural:([^{}|]*)\|([^{}]*)\}", lambda m: pl(m) if pl(m) is not None else m.group(0), t)
+    t = re.sub(r"\{(\w+)(?::[^{}]*)?\}",
+               lambda m: (num(vals[m.group(1)]) + (" Energy" if m.group(1).endswith("Energy") else "")) if m.group(1) in vals else m.group(0), t)
+    return clean(t)
+
+
+def ensure(mod, pkg):
+    try:
+        __import__(mod)
+        return True
+    except ImportError:
+        import subprocess
+        subprocess.call([sys.executable, "-m", "pip", "install", "--quiet", "--user", "--disable-pip-version-check", pkg])
+        try:
+            __import__(mod)
+            return True
+        except ImportError:
+            return False
+
+
+def load_card_data(pck_path):
+    dll = os.path.join(os.path.dirname(pck_path), "data_sts2_windows_x86_64", "sts2.dll")
+    if not os.path.isfile(dll):
+        return {}
+    try:
+        if not (ensure("dnfile", "dnfile") and ensure("dncil", "dncil")):
+            print("Could not install the code reader, so base numbers are skipped.")
+            return {}
+        sys.path.insert(0, HERE)
+        import card_values
+        data = card_values.read_cards(dll)
+        for ns, tag in (("Models.Relics", "relic"), ("Models.Potions", "potion")):
+            try:
+                for k, v in card_values.read_vars(dll, ns).items():
+                    data.setdefault("@" + tag + ":" + k, {"vars": v})
+            except Exception:
+                pass
+        print(f"card/relic/potion numbers read: {len(data)}")
+        return data
+    except Exception as e:
+        print("Could not read card numbers (" + str(e)[:80] + "), continuing without them.")
+        return {}
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     quiet = "--if-missing" in sys.argv
@@ -198,6 +253,7 @@ def main():
             fail += 1
             print("failed", p, e)
     print(f"pictures saved: {done}, failed: {fail}")
+    cards = load_card_data(path)
     info = {}
     for name, fields in (("cards", ("description",)), ("relics", ("description",)), ("potions", ("description",)), ("events", ())):
         try:
@@ -207,12 +263,28 @@ def main():
         for k, v in data.items():
             m = re.match(r"^([A-Z0-9_]+)\.description$", k) or re.match(r"^([A-Z0-9_]+)\.pages\.INITIAL\.description$", k)
             if m and v and (name != "events" or "pages.INITIAL" in k):
-                entry = {"text": clean(v)[:400]}
-                if name == "cards" and "IfUpgraded" in v:
-                    up = clean(v, True)[:400]
+                key = m.group(1).lower()
+                cd = cards.get(key) if name == "cards" else cards.get("@" + name[:-1] + ":" + key)
+                if cd and name != "cards":
+                    info.setdefault(key, {"text": render(v, cd["vars"])[:400]})
+                    continue
+                if cd:
+                    entry = {"text": render(v, cd["vars"])[:400]}
+                    up = render(v, cd["up_vars"], True)[:400]
                     if up != entry["text"]:
                         entry["up"] = up
-                info.setdefault(m.group(1).lower(), entry)
+                    entry["cost"] = cd["cost"]
+                    if cd.get("up_cost") != cd["cost"]:
+                        entry["up_cost"] = cd["up_cost"]
+                    entry["type"] = cd.get("type")
+                    entry["rarity"] = cd.get("rarity")
+                else:
+                    entry = {"text": clean(v)[:400]}
+                    if name == "cards" and "IfUpgraded" in v:
+                        up = clean(v, True)[:400]
+                        if up != entry["text"]:
+                            entry["up"] = up
+                info.setdefault(key, entry)
     with open(os.path.join(ART, "descriptions.json"), "w", encoding="utf-8") as fh:
         json.dump(info, fh, ensure_ascii=False, indent=1)
     print(f"descriptions written: {len(info)}")
