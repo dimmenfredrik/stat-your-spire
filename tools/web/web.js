@@ -176,22 +176,25 @@ def call(name, args_json):
     const have = window.WEB_ART.list.length;
     const el = document.createElement("div");
     el.id = "webArtDlg"; el.className = "fixed inset-0 z-[60] grid place-items-center bg-black/60 p-6 overflow-auto";
-    const file = (id, label, note) => `<div class="mt-3 flex items-center gap-3"><button id="${id}" class="shrink-0 rounded-lg border border-line bg-card2 px-3 py-2 text-sm font-semibold hover:border-[var(--accent)]">${label}</button><span id="${id}T" class="text-xs text-faint">${note}</span></div>`;
+    const PATH = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Slay the Spire 2";
+    const file = (id, label, note, path) => `<div class="mt-4"><div class="flex items-center gap-3"><button id="${id}" class="shrink-0 rounded-lg border border-line bg-card2 px-3 py-2 text-sm font-semibold hover:border-[var(--accent)]">${label}</button><span id="${id}T" class="text-xs text-faint">${note}</span></div>
+      <div class="mt-2 flex items-center gap-2"><code class="min-w-0 flex-1 break-all rounded-md bg-card2 px-2 py-1 text-[11.5px] text-ink">${path}</code><button id="${id}C" class="shrink-0 rounded-md border border-line px-2 py-1 text-xs font-semibold text-[var(--accent)]">Copy path</button></div></div>`;
     el.innerHTML = `<div class="w-full max-w-xl rounded-2xl border border-line bg-card p-7">
       <div class="text-lg font-extrabold">Card pictures</div>
       <p class="mt-2 text-[14px] leading-relaxed text-dim">The pictures are made right here from <b class="text-ink">your own copy of the game</b>, once. They stay in this browser and are <b class="text-ink">never uploaded</b>.</p>
       ${have ? `<p class="mt-3 text-sm text-good">Pictures are on (${have} images).</p>` : ""}
-      <div class="mt-4 rounded-xl bg-card2 p-4 text-[13px] leading-relaxed text-dim">In Steam: right-click Slay the Spire 2 → Manage → Browse local files. Then pick:
-        <div class="mt-2"><code class="text-ink">SlayTheSpire2.pck</code> (about 2 GB, it is only read, not copied)</div>
-        <div><code class="text-ink">data_sts2_windows_x86_64\\sts2.dll</code> (optional: gives the real card numbers)</div></div>
-      ${file("wdPck", "Choose SlayTheSpire2.pck", "not chosen")}
-      ${file("wdDll", "Choose sts2.dll", "optional")}
+      <p class="mt-4 text-[13px] leading-relaxed text-dim">Press a button, then in the window that opens <b class="text-ink">click the address bar at the top, paste the path (Ctrl+V) and press Enter</b>. The file is then listed: click it and press Open.</p>
+      ${file("wdPck", "Choose SlayTheSpire2.pck", "about 2 GB, only read", PATH)}
+      ${file("wdDll", "Choose sts2.dll", "optional: real card numbers", PATH + "\\data_sts2_windows_x86_64")}
+      <p class="mt-3 text-[12px] text-faint">Not found? Steam may be on another drive. In Steam right-click Slay the Spire 2 → Manage → Browse local files, then copy that folder's address instead.</p>
       <div class="mt-5 flex gap-2"><button id="wdGo" class="flex-1 rounded-xl bg-[var(--accent)] px-4 py-2.5 text-[15px] font-bold text-[#12151b] opacity-50" disabled>Make the pictures</button><button id="wdClose" class="rounded-xl border border-line bg-card2 px-4 py-2.5 text-[15px] font-semibold">Close</button></div>
       ${have ? `<button id="wdRemove" class="mt-3 text-xs text-faint underline">Remove the pictures from this browser</button>` : ""}
       <div id="wdMsg" class="mt-3 text-sm text-dim"></div><div id="wdErr" class="mt-1 text-sm text-bad"></div></div>`;
     document.body.appendChild(el);
     const chosen = {pck: null, dll: null};
     const choose = (key, accept, tid) => { const i = document.createElement("input"); i.type = "file"; i.accept = accept; i.onchange = () => { if (i.files[0]) { chosen[key] = i.files[0]; $(tid).textContent = i.files[0].name; $("wdGo").disabled = !chosen.pck; $("wdGo").style.opacity = chosen.pck ? 1 : .5; } }; i.click(); };
+    const copy = (id, text) => { $(id).onclick = async () => { try { await navigator.clipboard.writeText(text); $(id).textContent = "Copied"; } catch (e) { $(id).textContent = "Select and copy it by hand"; } }; };
+    copy("wdPckC", PATH); copy("wdDllC", PATH + "\\data_sts2_windows_x86_64");
     $("wdPck").onclick = () => choose("pck", ".pck", "wdPckT");
     $("wdDll").onclick = () => choose("dll", ".dll", "wdDllT");
     $("wdClose").onclick = () => { if (!el.dataset.busy) el.remove(); };
