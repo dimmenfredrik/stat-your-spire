@@ -86,18 +86,24 @@ def call(name, args_json):
     const el = document.createElement("div");
     el.id = "webStart";
     el.className = "fixed inset-0 z-50 bg-bg grid place-items-center p-6 overflow-auto";
-    el.innerHTML = `<div class="w-full max-w-xl rounded-2xl border border-line bg-card p-8">
-      <div class="flex items-center gap-3"><div class="size-10 rounded-lg bg-[#8da2c0] text-[#12151b] grid place-items-center font-extrabold">S2</div><div><div class="text-xl font-extrabold">STS2 Coach</div><div class="text-xs text-faint">Slay the Spire 2 run analytics, in your browser</div></div></div>
-      <p class="mt-5 text-[15px] text-dim leading-relaxed">Pick your finished runs (the .run files). Everything is worked out inside this page. <b class="text-ink">Nothing is uploaded</b> and your game files are only read, never changed.</p>
-      <div class="mt-5 rounded-xl bg-card2 p-4 text-sm">
-        <div class="text-[11px] font-bold tracking-wider text-faint">WHERE IS IT?</div>
-        <code class="mt-1 block break-all text-[13px] text-ink">%APPDATA%\\SlayTheSpire2\\steam\\&lt;your steam id&gt;\\profile1\\saves\\history</code>
-        <button id="wsCopy" class="mt-2 text-xs font-semibold text-[var(--accent)]">Copy the start of this path</button>
-        <span class="text-xs text-faint"> and paste it into the address bar of the folder window.</span></div>
-      <div id="wsRes" class="mt-5"></div>
-      <div id="wsMsg" class="mt-4 text-sm text-dim"></div>
-      <div id="wsErr" class="mt-2 text-sm text-bad"></div>
-      <p class="mt-6 text-[11px] text-faint">Want card pictures, exact card numbers and automatic refresh? Get the <a class="underline" href="https://github.com/dimmenfredrik/sts2-coach" target="_blank" rel="noopener">downloadable version</a>. Unofficial fan tool, not affiliated with Mega Crit.</p></div>`;
+    el.innerHTML = `<div class="w-full max-w-5xl grid gap-8 lg:grid-cols-[1.15fr_1fr] items-center">
+      <div>
+        <div class="flex items-center gap-3"><div class="size-10 rounded-lg bg-[#8da2c0] text-[#12151b] grid place-items-center font-extrabold">S2</div><div class="text-xl font-extrabold">STS2 Coach</div></div>
+        <h1 class="mt-6 text-3xl sm:text-4xl font-extrabold leading-tight">See exactly where your runs go wrong</h1>
+        <p class="mt-3 text-[15px] text-dim leading-relaxed">Habits that cost you runs, the bosses that beat you, your best cards, and a Focus screen for your second monitor. Made from your own finished runs.</p>
+        <div class="relative mt-5 h-64 overflow-hidden rounded-xl border border-line"><img src="static/preview.webp" alt="" class="h-full w-full object-cover object-top"><div class="absolute inset-0" style="background:linear-gradient(180deg,transparent 60%,#14171d)"></div></div>
+      </div>
+      <div class="rounded-2xl border border-line bg-card p-6">
+        <div class="text-lg font-bold">Load your runs</div>
+        <div class="mt-1 text-xs text-faint">Takes about 30 seconds. Nothing is uploaded and your game files are only read, never changed.</div>
+        <div id="wsRes" class="mt-4"></div>
+        <ol class="mt-4 space-y-2.5 text-[13px] text-dim leading-snug">
+          <li class="flex gap-2.5"><span class="grid size-5 shrink-0 place-items-center rounded-full bg-[var(--accent)]/20 text-[11px] font-extrabold text-[var(--accent)]">1</span><span>Press the button, paste <code class="rounded bg-card2 px-1.5 py-0.5 text-[12px] text-ink">%APPDATA%\\SlayTheSpire2\\steam</code> into the address bar of the window that opens and press Enter. <button id="wsCopy" class="font-semibold text-[var(--accent)]">Copy</button></span></li>
+          <li class="flex gap-2.5"><span class="grid size-5 shrink-0 place-items-center rounded-full bg-[var(--accent)]/20 text-[11px] font-extrabold text-[var(--accent)]">2</span><span>Open your number folder, then <code class="rounded bg-card2 px-1.5 py-0.5 text-[12px] text-ink">profile1\\saves\\history</code>. Press <b class="text-ink">Ctrl+A</b> to select all the runs, then <b class="text-ink">Open</b>.</span></li>
+          <li class="flex gap-2.5"><span class="grid size-5 shrink-0 place-items-center rounded-full bg-[var(--accent)]/20 text-[11px] font-extrabold text-[var(--accent)]">3</span><span>That is it. You can also drag the run files onto this page.</span></li></ol>
+        <div id="wsMsg" class="mt-4 text-sm text-dim"></div>
+        <div id="wsErr" class="mt-2 text-sm text-bad"></div>
+        <p class="mt-5 text-[11px] text-faint">Want card pictures, exact card numbers and automatic refresh? Get the <a class="underline" href="https://github.com/dimmenfredrik/sts2-coach" target="_blank" rel="noopener">downloadable version</a>. Unofficial fan tool, not affiliated with Mega Crit.</p></div></div>`;
     document.body.appendChild(el);
     $("wsCopy").onclick = () => { navigator.clipboard && navigator.clipboard.writeText("%APPDATA%\\SlayTheSpire2\\steam"); $("wsCopy").textContent = "Copied"; };
     return el;
@@ -130,8 +136,7 @@ def call(name, args_json):
     $("wsMsg").textContent = "Loading the analysis engine (about 10 MB, first time only)...";
     booted = bootPython().then(() => { $("wsMsg").textContent = ""; }).catch(e => { $("wsErr").textContent = "Could not load the analysis engine: " + e.message + ". Check your connection and reload."; throw e; });
     const last = window.showDirectoryPicker ? await lastHandle() : null;
-    const hint = `<div class="mt-3 rounded-xl border border-dashed border-line p-4 text-[13px] text-dim leading-relaxed"><b class="text-ink">Easiest:</b> press the button, paste the path into the address bar of the window that opens, press Enter, then press <b class="text-ink">Ctrl+A</b> to select all the runs and <b class="text-ink">Open</b>. Or open that folder in Explorer, press Ctrl+A, and <b class="text-ink">drag the files onto this page</b>.</div>`;
-    $("wsRes").innerHTML = (last ? btn("wsLast", "Use the same folder as last time (" + esc(last.name) + ")", true) + `<div class="h-2"></div>` : "") + btn("wsFiles", "Choose run files", !last) + hint + (window.showDirectoryPicker ? `<div class="h-3"></div>` + btn("wsPick", "Or choose a whole folder (not inside AppData)", false) : "");
+    $("wsRes").innerHTML = (last ? btn("wsLast", "Use the same folder as last time (" + esc(last.name) + ")", true) + `<div class="h-2"></div>` : "") + btn("wsFiles", "Choose run files", !last) + (window.showDirectoryPicker ? `<div class="mt-2 text-center text-xs text-faint"><button id="wsPick" class="underline hover:text-ink">or choose a whole folder (not inside AppData)</button></div>` : "");
     $("wsFiles").onclick = () => pickFiles(el);
     if ($("wsPick")) $("wsPick").onclick = () => pick(el);
     if (last) $("wsLast").onclick = async () => {
