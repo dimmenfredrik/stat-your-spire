@@ -174,7 +174,7 @@ function viewDash() {
         <div class="w-[92px] shrink-0"><div class="font-extrabold tracking-wide ${cls}">${lbl}</div><div class="num text-xs text-dim mt-0.5">Floor ${r.final_floor}</div></div>
         <div class="flex items-center gap-2 shrink-0"><span class="rounded-md px-2 py-1 text-xs font-bold" style="background:${hexA(cc, .16)};color:${cc}">${esc(r.character)}</span>
           <span class="rounded-md bg-card2 px-2 py-1 text-xs font-semibold text-dim">A${r.ascension}</span><span class="text-xs text-faint">${esc(r.date)}</span></div>
-        <div class="flex-1 min-w-[150px]"><div class="text-[10px] font-semibold tracking-wider text-faint">${r.result === "WIN" ? "RESULT" : "KILLED BY"}</div><div class="font-semibold leading-snug">${r.result === "WIN" ? "Victory" : esc(r.killer || "–")}</div></div>
+        <div class="flex min-w-[190px] flex-1 items-center gap-2.5"><span class="grid w-9 shrink-0 place-items-center">${r.result !== "WIN" && bossArt(r.killer || "") ? halo(bossArt(r.killer), 36, 26, "#ff6b6b") : ""}</span><div><div class="text-[10px] font-semibold tracking-wider text-faint">${r.result === "WIN" ? "RESULT" : "KILLED BY"}</div><div class="font-semibold leading-snug">${r.result === "WIN" ? "Victory" : esc(r.killer || "–")}</div></div></div>
         <div class="flex gap-1.5 flex-wrap justify-end">${r.badges.map(b => pill(b.k, b.label)).join("")}</div>
         <svg class="absolute right-4 top-1/2 -translate-y-1/2 size-5 text-dim shrink-0 transition-transform ${open ? "rotate-180" : ""}" id="chev-${cssId(r.file)}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 5 5-5"/></svg>
       </button>
