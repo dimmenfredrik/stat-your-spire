@@ -56,13 +56,14 @@
   <!-- ============ main ============ -->
   <main id="main" class="flex-1 min-w-0 overflow-y-auto">
     <div class="max-w-[1340px] mx-auto px-8 pt-6 pb-16">
-      <header id="banner" class="rounded-2xl border accent-line p-5 mb-5" style="background:linear-gradient(120deg,color-mix(in srgb,var(--accent) 13%,transparent),transparent 70%),#1c2029">
-        <div class="flex items-center gap-3 flex-wrap">
-          <span class="size-3.5 rounded-full" style="background:var(--accent);box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 18%,transparent)"></span>
+      <header id="banner" class="relative overflow-hidden rounded-2xl border accent-line p-5 mb-5" style="background:linear-gradient(120deg,color-mix(in srgb,var(--accent) 13%,transparent),transparent 70%),#1c2029">
+        <div id="bannerArt" class="pointer-events-none absolute inset-y-3 right-3 aspect-[132/196] hidden"></div>
+        <div class="relative flex items-center gap-3 flex-wrap">
+          <span id="bannerIcon" class="inline-flex items-center"><span class="size-3.5 rounded-full" style="background:var(--accent);box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 18%,transparent)"></span></span>
           <h1 id="title" class="text-3xl font-bold tracking-tight">All characters</h1>
           <span id="subtitle" class="text-sm text-faint"></span>
         </div>
-        <div class="flex items-center gap-3 flex-wrap mt-4">
+        <div class="relative flex items-center gap-3 flex-wrap mt-4">
           <span class="text-[11px] font-semibold tracking-wider text-faint uppercase">Ascension</span>
           <select id="asc" class="rounded-lg border border-line bg-card2 text-sm px-3 py-1.5 outline-none focus:border-[var(--accent)]"></select>
           <span class="text-[11px] font-semibold tracking-wider text-faint uppercase ml-3">Runs</span>

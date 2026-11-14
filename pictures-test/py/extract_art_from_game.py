@@ -228,6 +228,13 @@ def collect_jobs(pck):
             jobs.append(("potion", p, stem))
         elif p.startswith("images/events/") and p.count("/") == 2:
             jobs.append(("event", p, stem))
+    for p in pck.ents:   # character pictures: small icon + portrait, used by the banner and the sidebar
+        m = re.match(r"images/ui/top_panel/character_icon_([a-z]+)\.png\.import$", p) or None
+        if m and m.group(1) not in ("deprecated_character", "random_character"):
+            jobs.append(("char", p, "char_icon_" + m.group(1)))
+        m = re.match(r"images/packed/character_select/char_select_([a-z]+)\.png\.import$", p)
+        if m and m.group(1) not in ("random", "rotating", "player_icon", "lock3", "outline", "button_mask"):
+            jobs.append(("char", p, "char_portrait_" + m.group(1)))
     have = {j[2] for j in jobs}
     jobs += [j for j in beta_jobs if j[2] not in have]   # early-access placeholder art only where nothing better exists
     return jobs
@@ -272,7 +279,7 @@ def build_info(pck, cards):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     quiet = "--if-missing" in sys.argv
-    if quiet and os.path.isfile(os.path.join(ART, "descriptions.json")):
+    if quiet and os.path.isfile(os.path.join(ART, "descriptions.json")) and os.path.isfile(os.path.join(ART, "char_icon_ironclad.webp")):
         return 0                                   # already built on this PC
     path = args[0] if args else find_pck()
     if not path:
