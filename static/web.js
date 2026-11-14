@@ -88,7 +88,7 @@ def call(name, args_json):
     el.className = "fixed inset-0 z-50 bg-bg grid place-items-center p-6 overflow-auto";
     el.innerHTML = `<div class="w-full max-w-xl rounded-2xl border border-line bg-card p-8">
       <div class="flex items-center gap-3"><div class="size-10 rounded-lg bg-[#8da2c0] text-[#12151b] grid place-items-center font-extrabold">S2</div><div><div class="text-xl font-extrabold">STS2 Coach</div><div class="text-xs text-faint">Slay the Spire 2 run analytics, in your browser</div></div></div>
-      <p class="mt-5 text-[15px] text-dim leading-relaxed">Pick the folder with your finished runs. Everything is worked out inside this page. <b class="text-ink">Nothing is uploaded</b> and your game files are only read, never changed.</p>
+      <p class="mt-5 text-[15px] text-dim leading-relaxed">Pick your finished runs (the .run files). Everything is worked out inside this page. <b class="text-ink">Nothing is uploaded</b> and your game files are only read, never changed.</p>
       <div class="mt-5 rounded-xl bg-card2 p-4 text-sm">
         <div class="text-[11px] font-bold tracking-wider text-faint">WHERE IS IT?</div>
         <code class="mt-1 block break-all text-[13px] text-ink">%APPDATA%\\SlayTheSpire2\\steam\\&lt;your steam id&gt;\\profile1\\saves\\history</code>
@@ -119,6 +119,9 @@ def call(name, args_json):
     }
     return new Promise(res => { const i = document.createElement("input"); i.type = "file"; i.webkitdirectory = true; i.multiple = true; i.onchange = async () => res(await finish([...i.files], el)); i.click(); });
   }
+  function pickFiles(el) {   // plain file chooser: not subject to Chrome's folder block
+    return new Promise(res => { const i = document.createElement("input"); i.type = "file"; i.multiple = true; i.accept = ".run"; i.onchange = async () => { dirHandle = null; res(await finish([...i.files], el)); }; i.click(); });
+  }
   function pickLegacy(el) {   // old-style folder chooser: Chrome does not block AppData here
     return new Promise(res => { const i = document.createElement("input"); i.type = "file"; i.webkitdirectory = true; i.multiple = true; i.onchange = async () => { dirHandle = null; res(await finish([...i.files], el)); }; i.click(); });
   }
@@ -127,12 +130,10 @@ def call(name, args_json):
     $("wsMsg").textContent = "Loading the analysis engine (about 10 MB, first time only)...";
     booted = bootPython().then(() => { $("wsMsg").textContent = ""; }).catch(e => { $("wsErr").textContent = "Could not load the analysis engine: " + e.message + ". Check your connection and reload."; throw e; });
     const last = window.showDirectoryPicker ? await lastHandle() : null;
-    $("wsRes").innerHTML = (last ? btn("wsLast", "Use the same folder as last time (" + esc(last.name) + ")", true) + `<div class="h-2"></div>` : "") + btn("wsPick", window.showDirectoryPicker ? "Choose history folder" : "Choose history folder (select it, then confirm)", !last);
-    $("wsPick").onclick = () => pick(el);
-    if (window.showDirectoryPicker) {
-      $("wsRes").insertAdjacentHTML("beforeend", `<div class="mt-3 text-[12px] text-faint">Chrome says "can't open this folder because it contains system files"? Use this one instead:</div><div class="h-1.5"></div>` + btn("wsLegacy", "Choose folder (alternative method)", false));
-      $("wsLegacy").onclick = () => pickLegacy(el);
-    }
+    const hint = `<div class="mt-3 rounded-xl border border-dashed border-line p-4 text-[13px] text-dim leading-relaxed"><b class="text-ink">Easiest:</b> press the button, paste the path into the address bar of the window that opens, press Enter, then press <b class="text-ink">Ctrl+A</b> to select all the runs and <b class="text-ink">Open</b>. Or open that folder in Explorer, press Ctrl+A, and <b class="text-ink">drag the files onto this page</b>.</div>`;
+    $("wsRes").innerHTML = (last ? btn("wsLast", "Use the same folder as last time (" + esc(last.name) + ")", true) + `<div class="h-2"></div>` : "") + btn("wsFiles", "Choose run files", !last) + hint + (window.showDirectoryPicker ? `<div class="h-3"></div>` + btn("wsPick", "Or choose a whole folder (not inside AppData)", false) : "");
+    $("wsFiles").onclick = () => pickFiles(el);
+    if ($("wsPick")) $("wsPick").onclick = () => pick(el);
     if (last) $("wsLast").onclick = async () => {
       try { if ((await last.requestPermission({mode: "read"})) !== "granted") throw 0; dirHandle = last; folderName = last.name; await finish(await filesFromHandle(last), el); }
       catch (e) { $("wsErr").textContent = "That folder is not available any more. Choose it again."; }
@@ -157,9 +158,8 @@ def call(name, args_json):
     const fb = $("folderBtn");
     if (fb) fb.addEventListener("click", async e => {
       e.stopImmediatePropagation();
-      const el = screen(); el.querySelector("#wsRes").innerHTML = btn("wsPick2", "Choose history folder", true) + `<div class="h-2"></div>` + btn("wsLegacy2", "Choose folder (alternative method)", false);
-      el.querySelector("#wsLegacy2").onclick = async () => { if (await pickLegacy(el)) { await window.WEB_API("reload", []); if (typeof refresh === "function") refresh(); } };
-      el.querySelector("#wsPick2").onclick = async () => { if (await pick(el)) { await window.WEB_API("reload", []); if (typeof refresh === "function") refresh(); } };
+      const el = screen(); el.querySelector("#wsRes").innerHTML = btn("wsFiles2", "Choose run files", true);
+      el.querySelector("#wsFiles2").onclick = async () => { if (await pickFiles(el)) { await window.WEB_API("reload", []); if (typeof refresh === "function") refresh(); } };
     }, true);
   });
 })();
