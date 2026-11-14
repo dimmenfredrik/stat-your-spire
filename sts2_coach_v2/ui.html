@@ -1,0 +1,1268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STS2 Coach v2</title>
+<script src="chart.min.js"></script>
+<style>
+:root{
+  --bg:#161920; --bg2:#13161c; --panel:#1c2029; --panel2:#222733; --panel3:#2b313e;
+  --border:rgba(255,255,255,.07); --border2:rgba(255,255,255,.13);
+  --text:#e9edf3; --dim:#a9b2c1; --faint:#828da0;
+  --good:#5fd38d; --bad:#ff6b6b; --warn:#ffb547; --info:#6cb6ff;
+  --accent:#7d93b5; --accent-soft:rgba(125,147,181,.14); --accent-tint:rgba(125,147,181,.10); --accent-line:rgba(125,147,181,.30);
+  --r:14px; --r-sm:10px; --r-xs:7px;
+  --font:"Segoe UI Variable Text","Segoe UI",Inter,system-ui,-apple-system,sans-serif;
+  --mono:"Cascadia Mono",Consolas,ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 var(--font);-webkit-font-smoothing:antialiased;overflow:hidden}
+::selection{background:var(--accent-soft);color:var(--text)}
+button{font:inherit;color:inherit}
+a{color:var(--info)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:#2a3242;border-radius:10px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:#3a4559}
+::-webkit-scrollbar-track{background:transparent}
+.num{font-variant-numeric:tabular-nums}
+.good{color:var(--good)} .bad{color:var(--bad)} .warn{color:var(--warn)} .info{color:var(--info)} .dim{color:var(--dim)} .faint{color:var(--faint)}
+
+/* ---------- layout ---------- */
+.app{display:grid;grid-template-columns:268px 1fr;height:100vh}
+aside{background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:22px 16px 18px;min-height:0}
+main{overflow-y:auto;min-width:0;padding:26px 30px 40px}
+.brand{display:flex;align-items:center;gap:12px;padding:0 6px 22px}
+.logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#b28cff);display:grid;place-items:center;font-weight:800;color:#0b0e13;letter-spacing:-.5px;transition:background .3s}
+.brand b{display:block;font-size:16px;letter-spacing:-.2px}
+.brand span{font-size:12px;color:var(--faint)}
+.side-label{font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--faint);text-transform:uppercase;padding:0 8px 8px}
+.chars{display:flex;flex-direction:column;gap:2px}
+.char{display:grid;grid-template-columns:14px 1fr auto auto;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:transparent;padding:9px 10px;border-radius:var(--r-sm);cursor:pointer;color:#cbd2dd;position:relative;transition:background .15s,color .15s}
+.char:hover{background:var(--panel)}
+.char.sel{background:var(--panel2);color:var(--text);font-weight:600}
+.char.sel::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:3px;background:var(--c)}
+.char .dot{width:9px;height:9px;border-radius:50%;background:var(--c)}
+.char .rec{font-size:12px;color:var(--dim)}
+.char .pct{font-size:12px;width:36px;text-align:right;color:var(--faint)}
+.char .pct.hi{color:var(--good)}
+.side-bottom{margin-top:auto;padding-top:18px;display:flex;flex-direction:column;gap:4px}
+.switch{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:var(--r-xs);cursor:pointer;color:var(--dim);font-size:13px;user-select:none}
+.switch:hover{color:var(--text);background:var(--panel)}
+.switch input{position:absolute;opacity:0;pointer-events:none}
+.switch .track{width:30px;height:17px;border-radius:20px;background:var(--panel3);position:relative;flex:none;transition:background .2s}
+.switch .track::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#8b95a7;transition:transform .2s,background .2s}
+.switch input:checked + .track{background:var(--accent)}
+.switch input:checked + .track::after{transform:translateX(13px);background:#0b0e13}
+.switch input:focus-visible + .track{outline:2px solid var(--accent);outline-offset:2px}
+.btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border2);background:var(--panel);padding:8px 14px;border-radius:var(--r-sm);cursor:pointer;font-weight:600;font-size:13px;transition:background .15s,border-color .15s}
+.btn:hover{background:var(--panel2);border-color:rgba(255,255,255,.2)}
+.btn.primary{background:var(--accent);border-color:transparent;color:#0b0e13}
+.btn.primary:hover{filter:brightness(1.08)}
+.status{font-size:12px;color:var(--faint);padding:8px 8px 0;line-height:1.4;word-break:break-word}
+
+/* ---------- header ---------- */
+.title-row{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.title-row h1{margin:0;font-size:30px;letter-spacing:-.6px;font-weight:700;display:flex;align-items:center;gap:12px}
+.title-row h1 .tdot{width:14px;height:14px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 5px var(--accent-soft)}
+.subtitle{color:var(--dim);font-size:13px}
+.filters{display:flex;align-items:center;gap:10px;margin:16px 0 18px;flex-wrap:wrap}
+.flabel{font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--faint);text-transform:uppercase}
+.select{appearance:none;background:var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23a9b2c1' fill='none' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;border:1px solid var(--border2);color:var(--text);padding:7px 30px 7px 12px;border-radius:var(--r-sm);font:inherit;font-size:13px;cursor:pointer}
+.select option{background:#141922}
+.seg{display:inline-flex;background:var(--panel);border:1px solid var(--border);border-radius:var(--r-sm);padding:3px;gap:2px}
+.seg button{border:0;background:transparent;padding:6px 12px;border-radius:7px;cursor:pointer;color:var(--dim);font-size:13px;font-weight:600;transition:background .15s,color .15s}
+.seg button:hover{color:var(--text)}
+.seg button.on{background:var(--panel3);color:var(--accent)}
+.build{font-size:12px;color:var(--faint)}
+.banner{padding:16px 20px;margin-bottom:16px;border-radius:var(--r);border:1px solid var(--accent-line);background:linear-gradient(120deg,var(--accent-tint),transparent 78%),var(--panel);transition:border-color .3s,background .3s}
+.banner .filters{margin:14px 0 0}
+.title-row .modeseg{margin-left:auto;align-self:center}
+.stat,.panel,.habit,.gp-cell{border-color:var(--accent-line)}
+.panel:hover,.habit:hover{border-color:var(--accent)}
+.stat{border-color:var(--accent-line)}
+.cmp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.trend{display:flex;gap:3px;margin:10px 0 6px}
+.trend i{flex:1;max-width:26px;height:22px;border-radius:4px}
+.trend i.ok{background:var(--good);opacity:.8} .trend i.bad{background:var(--bad)} .trend i.na{background:var(--panel3)}
+body.compact .adv{display:none !important}
+body.compact .cards{grid-template-columns:repeat(2,minmax(0,1fr)) minmax(0,2fr)}
+/* dashboard */
+body.dash .cards{display:none}
+.dtop{display:grid;grid-template-columns:auto 1fr;gap:26px;align-items:center;margin-bottom:16px;padding:20px 24px}
+.donut{position:relative;width:132px;height:132px}
+.donut svg{transform:rotate(-90deg)}
+.donut .mid{position:absolute;inset:0;display:grid;place-items:center;text-align:center;line-height:1.1}
+.donut .mid b{font-size:27px;letter-spacing:-.5px} .donut .mid span{display:block;font-size:12px;color:var(--dim);margin-top:3px}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.kpi{background:var(--panel2);border:1px solid var(--accent-line);border-radius:var(--r);padding:14px 16px;position:relative}
+.kpi .kv{font-size:32px;font-weight:700;letter-spacing:-.8px;line-height:1.1}
+.kpi .kl{font-size:11.5px;font-weight:700;letter-spacing:.07em;color:var(--dim);margin-top:5px}
+.grade{position:absolute;top:12px;right:12px;width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-weight:800;font-size:16px;color:#0b0e13}
+.grade.S{background:#b48cff} .grade.A{background:var(--good)} .grade.B{background:var(--info)} .grade.C{background:var(--warn)} .grade.D{background:var(--bad)} .grade.N{background:var(--panel3);color:var(--faint)}
+.dcols{display:grid;grid-template-columns:minmax(0,35fr) minmax(0,65fr);gap:16px;align-items:start}
+.dcols .stack{display:flex;flex-direction:column;gap:16px}
+.dh{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.dh h3{margin:0;font-size:14px;letter-spacing:.02em}
+.dh .tag{font-size:11px;font-weight:700;color:var(--faint);letter-spacing:.06em}
+.crow{display:grid;grid-template-columns:minmax(0,1.3fr) 34px minmax(0,1.2fr) 46px;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--border)}
+.crow:first-of-type{border-top:0}
+.crow .cn{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crow .cp{text-align:right;color:var(--dim);font-size:12.5px}
+.wbar{position:relative;height:20px;border-radius:5px;background:var(--panel3);overflow:hidden}
+.wbar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);opacity:.55}
+.wbar b{position:relative;display:block;text-align:center;font-size:12px;line-height:20px}
+.lift{font-size:12px;font-weight:800;text-align:center;padding:2px 0;border-radius:5px;background:var(--panel3)}
+.lift.good{color:var(--good);background:rgba(95,211,141,.14)} .lift.bad{color:var(--bad);background:rgba(255,107,107,.14)}
+.prow{display:grid;grid-template-columns:minmax(0,1.5fr) 40px 84px;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--border);font-size:13px}
+.prow:first-of-type{border-top:0}
+.prow .pn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.prow .pw{text-align:right;color:var(--good);font-weight:700} .prow .ps{text-align:right;color:var(--warn);font-size:12px;font-weight:700}
+.fitem{border:1px solid var(--border);border-left:4px solid var(--faint);border-radius:var(--r-sm);background:var(--panel);margin-bottom:8px;overflow:hidden;transition:border-color .15s}
+.fitem.WIN{border-left-color:var(--good)} .fitem.LOSS{border-left-color:var(--bad)} .fitem:hover{border-color:var(--accent-line)}
+.fitem.WIN:hover{border-left-color:var(--good)} .fitem.LOSS:hover{border-left-color:var(--bad)}
+.frow{display:grid;grid-template-columns:132px minmax(0,1fr) auto 28px;gap:14px;align-items:center;padding:11px 14px;cursor:pointer}
+.fres b{font-size:14px;letter-spacing:.02em} .fres small{display:block;color:var(--faint);font-size:11.5px;margin-top:2px}
+.fkill{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dim)}
+.fbadges{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.pill{font-size:10.5px;font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:999px;white-space:nowrap}
+.pill.gold{background:rgba(255,181,71,.16);color:var(--warn)} .pill.potion{background:rgba(108,182,255,.16);color:var(--info)}
+.pill.pair{background:rgba(180,140,255,.18);color:#c4a6ff} .pill.bleed{background:rgba(255,107,107,.16);color:var(--bad)}
+.ftog{border:0;background:transparent;color:var(--dim);font-size:16px;cursor:pointer;transition:transform .15s}
+.fitem.open .ftog{transform:rotate(180deg);color:var(--accent)}
+.fbody{display:none;border-top:1px solid var(--border);padding:16px 18px;background:var(--bg2)}
+.fitem.open .fbody{display:block}
+.more{width:100%;margin-top:4px}
+@media (max-width:1150px){.dcols{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.dtop{grid-template-columns:1fr}}
+.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) minmax(0,1.5fr);gap:12px;margin-bottom:22px}
+.stat{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:15px 18px;min-width:0}
+.stat .v{font-size:26px;font-weight:700;letter-spacing:-.5px;line-height:1.15}
+.stat .c{font-size:12px;color:var(--dim);margin-top:3px;line-height:1.3}
+.strip{display:flex;gap:4px;margin:7px 0 9px}
+.strip i{flex:1;max-width:22px;height:16px;border-radius:4px}
+.strip i.w{background:var(--good)} .strip i.l{background:var(--bad);opacity:.85}
+
+/* ---------- tabs ---------- */
+.tabs{display:flex;gap:28px;border-bottom:1px solid var(--border);margin-bottom:18px;position:sticky;top:-26px;background:var(--bg);z-index:5;padding-top:6px}
+.tab{border:0;background:transparent;padding:10px 0 12px;cursor:pointer;color:var(--dim);font-size:15px;font-weight:600;position:relative;transition:color .15s}
+.tab:hover{color:var(--text)}
+.tab.on{color:var(--text)}
+.tab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:3px;border-radius:3px 3px 0 0;background:var(--accent)}
+/* strips, pairings, turning points */
+.strip-panel .srow{display:flex;align-items:center;gap:10px;margin:7px 0}
+.strip-panel .sl{width:78px;flex:none;font-size:11.5px;color:var(--dim);font-weight:600}
+.sblocks{display:flex;flex:1;gap:2px;align-items:stretch;min-width:0}
+.sblocks i{flex:1 1 0;min-width:4px;max-width:20px;height:20px;border-radius:3px;background:var(--panel3);transition:transform .12s,filter .12s;cursor:default}
+.sblocks i:hover{transform:scaleY(1.25);filter:brightness(1.25)}
+.sblocks i.l0,.sblocks i.pick{background:var(--good);opacity:.8} .sblocks i.l1,.sblocks i.skip{background:var(--warn)} .sblocks i.l2{background:var(--bad)}
+.sblocks u{flex:0 0 7px}
+.sblocks.ticks i{background:none;height:12px;font-size:9px;font-style:normal;color:var(--faint);text-align:center;overflow:visible;white-space:nowrap}
+.sblocks.ticks i:hover{transform:none;filter:none}
+.slegend{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--faint);margin-top:8px}
+.slegend b{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.pairrow{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px;padding:10px 0;border-bottom:1px solid var(--border);align-items:center}
+.pairrow:last-child{border-bottom:0}
+.pairrow .pt{font-size:13.5px} .pairrow .pt b{color:var(--text)}
+.pairrow .pn{font-size:12px;color:var(--dim);margin-top:3px}
+.pchip{display:inline-block;padding:3px 9px;margin:0 6px 6px 0;border-radius:6px;background:var(--panel);border:1px solid var(--border);font-size:12px;color:var(--dim)}
+.pchip b{color:var(--good)} .pchip .link{cursor:pointer;color:var(--info)}
+.tpb{display:inline-block;padding:2px 8px;border-radius:5px;font-size:10.5px;font-weight:800;letter-spacing:.05em;color:#0b0e13;margin:0 6px 3px 0}
+.tpb.synergy{background:#b48cff} .tpb.gold{background:var(--warn)} .tpb.bleed{background:var(--bad)}
+tr.tprow td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
+tr.tprow{background:rgba(255,181,71,.045)}
+.tpsum{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.tpsum .tpc{padding:6px 10px;border-radius:var(--r-sm);background:var(--panel);border:1px solid var(--border);font-size:12.5px;color:var(--dim)}
+.tpsum .tpc b{color:var(--text);margin-right:6px}
+.tphead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.subbar{display:flex;align-items:center;gap:14px;margin-bottom:18px;flex-wrap:wrap}
+.slider{display:flex;align-items:center;gap:10px}
+.slider input[type=range]{-webkit-appearance:none;width:150px;height:5px;border-radius:5px;background:var(--panel3);outline:none}
+.slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--bg);cursor:pointer;box-shadow:0 0 0 1px var(--accent)}
+.slider .val{font-weight:700;color:var(--accent);width:22px}
+
+/* ---------- generic panels ---------- */
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;min-width:0}
+.panel h3{margin:0;font-size:15px;font-weight:600;letter-spacing:-.1px}
+.panel .sub{font-size:12px;color:var(--faint);margin-top:2px}
+.panel .body{margin-top:14px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.stack{display:flex;flex-direction:column;gap:14px}
+.section-title{font-size:17px;font-weight:700;margin:6px 0 2px;letter-spacing:-.2px}
+.section-sub{font-size:12.5px;color:var(--dim);margin-bottom:12px}
+.empty{background:var(--panel);border:1px dashed var(--border2);border-radius:var(--r);padding:22px;color:var(--dim)}
+.empty b{display:block;color:var(--text);font-size:15px;margin-bottom:4px}
+.badge{font-size:10.5px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;text-transform:uppercase}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 9px;border-radius:20px;background:var(--panel3);color:var(--dim);border:1px solid var(--border)}
+.chip.link{cursor:pointer;color:var(--info)}
+.chip.link:hover{border-color:var(--info)}
+.bar{display:grid;grid-template-columns:120px minmax(80px,260px) auto;align-items:center;gap:12px;font-size:12.5px;margin:4px 0}
+.bar .lbl{color:var(--dim)}
+.bar .trk{height:8px;border-radius:8px;background:var(--panel3);overflow:hidden}
+.bar .trk i{display:block;height:100%;border-radius:8px}
+.fade-in{animation:fade .18s ease-out}
+@keyframes fade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+
+/* ---------- habits ---------- */
+.gameplan{border-radius:var(--r);padding:18px 20px;margin-bottom:22px;background:linear-gradient(180deg,var(--accent-soft),transparent 140%),var(--panel);border:1px solid var(--border2);position:relative;overflow:hidden}
+.gameplan::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--accent)}
+.gp-head{display:flex;align-items:baseline;gap:12px;margin-bottom:14px}
+.gp-head h2{margin:0;font-size:18px;letter-spacing:-.2px}
+.gp-cell{background:rgba(11,14,19,.55);border:1px solid var(--border);border-radius:var(--r-sm);padding:14px 15px;min-width:0}
+.gp-k{display:flex;justify-content:space-between;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--accent)}
+.gp-t{font-size:16px;font-weight:700;margin:4px 0 4px}
+.gp-d{font-size:12.5px;color:var(--dim)}
+.gp-target{font-size:12.5px;margin:7px 0 9px}
+.dots{display:inline-flex;gap:3px;vertical-align:middle;margin-right:8px}
+.dots i{width:10px;height:10px;border-radius:3px}
+.watch{background:var(--panel2);border-radius:var(--r-xs);padding:9px 11px;margin-top:8px;cursor:pointer;border:1px solid transparent;transition:border-color .15s}
+.watch:hover{border-color:var(--border2)}
+.watch .row1{display:flex;justify-content:space-between;align-items:center;font-size:10.5px;font-weight:700;letter-spacing:.07em}
+.watch .nm{font-weight:600;font-size:14px;margin-top:2px}
+.watch .meta{font-size:11.5px;color:var(--dim)}
+.habit{display:flex;background:var(--panel);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:12px;transition:border-color .15s}
+.habit:hover{border-color:var(--border2)}
+.habit .stripe{width:4px;flex:none}
+.habit .hb{padding:16px 20px;flex:1;min-width:0}
+.habit .ht{display:flex;align-items:center;gap:12px}
+.habit .rank{font-size:20px;font-weight:700;color:var(--faint);width:22px}
+.habit .title{font-size:16px;font-weight:700;flex:1}
+.habit .nums{color:var(--info);font-size:13px;margin:10px 0 4px}
+.habit .why{color:var(--dim);font-size:13px;margin-bottom:8px}
+.habit details summary{cursor:pointer;font-size:11.5px;font-weight:700;letter-spacing:.07em;color:var(--accent);list-style:none;display:inline-flex;align-items:center;gap:6px;padding:3px 0}
+.habit details summary::-webkit-details-marker{display:none}
+.habit details summary .car{transition:transform .15s;display:inline-block}
+.habit details[open] summary .car{transform:rotate(90deg)}
+.habit ul{margin:6px 0 0;padding:0;list-style:none}
+.habit li{position:relative;padding:3px 0 3px 22px;font-size:13.5px}
+.habit li::before{content:"→";position:absolute;left:2px;color:var(--faint)}
+.examples{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--faint)}
+.fine{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.fine div{background:var(--panel);border:1px solid var(--border);border-radius:var(--r-sm);padding:9px 12px;color:var(--good);font-size:13px}
+
+/* ---------- draft guide ---------- */
+.mini{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.mini .stat{padding:11px 16px}
+.mini .stat .v{font-size:19px}
+.tip{background:var(--accent-soft);border:1px solid var(--border2);border-radius:var(--r-sm);padding:11px 15px;margin-bottom:14px;font-size:13.5px}
+.col-head{display:flex;justify-content:space-between;align-items:baseline}
+.tile{background:var(--panel2);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;margin-top:8px;cursor:pointer;transition:border-color .15s,transform .15s}
+.tile:hover{border-color:var(--border2);transform:translateY(-1px)}
+.tile .t1{display:flex;justify-content:space-between;align-items:center}
+.tile .nm{font-weight:600}
+.tile .lift{font-weight:700;font-size:15px}
+.tile .t2{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-top:2px}
+.tile .conf{color:var(--faint);letter-spacing:1px;font-size:10px}
+.notes{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+.note{font-size:11px;padding:1px 7px;border-radius:5px;background:var(--panel)}
+.col-accent{height:3px;border-radius:3px;margin:-18px -20px 14px}
+
+/* ---------- tables ---------- */
+table{border-collapse:collapse;width:100%}
+.tbl th{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--panel);z-index:1}
+.tbl td{padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:top}
+.tbl tr:last-child td{border-bottom:0}
+#cardTable td{white-space:nowrap}
+#cardTable td:first-child{white-space:normal;min-width:130px}
+.runlist td:first-child{white-space:nowrap}
+.nowrap{white-space:nowrap}
+.tbl td.r,.tbl th.r{text-align:right}
+.tbl td.c,.tbl th.c{text-align:center}
+.tbl tbody tr{transition:background .12s}
+.tbl tbody tr.click{cursor:pointer}
+.tbl tbody tr.click:hover{background:rgba(255,255,255,.03)}
+.tbl tbody tr.sel{background:var(--accent-soft)}
+.tbl th.sort{cursor:pointer;user-select:none}
+.tbl th.sort:hover{color:var(--text)}
+.tbl th .arr{color:var(--accent);margin-left:4px}
+.scroll{overflow:auto;border-radius:var(--r-sm)}
+
+/* card table */
+.ct-wrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:14px;align-items:start}
+.search{background:var(--panel2);border:1px solid var(--border2);border-radius:var(--r-sm);padding:8px 12px 8px 34px;color:var(--text);font:inherit;font-size:13px;width:260px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%23828da0' stroke-width='1.8'%3E%3Ccircle cx='6' cy='6' r='4.5'/%3E%3Cpath d='M9.5 9.5L13 13'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:12px center}
+.search::placeholder{color:var(--faint)}
+.detail{position:sticky;top:60px}
+.wr-row{display:grid;grid-template-columns:118px 90px auto;align-items:center;gap:10px;font-size:12.5px;margin:5px 0}
+.wr-row .trk{height:7px;border-radius:7px;background:var(--panel3);overflow:hidden}
+.wr-row .trk i{display:block;height:100%}
+.dsec{border-top:1px solid var(--border);margin-top:14px;padding-top:12px}
+.dsec .k{font-size:11px;font-weight:700;letter-spacing:.07em;color:var(--accent);text-transform:uppercase}
+.dsec .s{font-size:11.5px;color:var(--faint);margin:2px 0 6px}
+.partner{background:var(--panel2);border-radius:var(--r-xs);padding:7px 10px;margin-top:5px}
+.partner .p1{display:flex;justify-content:space-between;font-weight:600}
+.partner .p2{font-size:11.5px;color:var(--dim)}
+
+/* ---------- autopsy ---------- */
+.ap-wrap{display:grid;grid-template-columns:400px minmax(0,1fr);gap:14px;align-items:start}
+.runlist{max-height:calc(100vh - 120px);overflow:auto}
+.res-WIN{color:var(--good)} .res-LOSS{color:var(--text)} .res-ABANDONED{color:var(--faint)}
+.killerchip{display:inline-flex;align-items:center;gap:10px;background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3);border-radius:var(--r-sm);padding:8px 12px;margin-bottom:12px;font-size:13px}
+.killerchip button{border:0;background:transparent;color:var(--info);cursor:pointer;font-weight:600}
+.ap-head h2{margin:0;font-size:24px;letter-spacing:-.4px}
+.ap-meta{color:var(--dim);font-size:13px;margin-top:4px}
+.callouts{list-style:none;margin:12px 0 0;padding:0}
+.callouts li{display:flex;gap:10px;padding:6px 0;font-size:13.5px}
+.callouts .ic{width:18px;flex:none;text-align:center;font-weight:700}
+.chartbox{position:relative;height:250px;margin-top:6px}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--dim);flex-wrap:wrap;margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;margin-right:5px;vertical-align:-1px}
+.floors td{font-size:12.8px}
+.floors .act td{background:var(--panel2);font-weight:700;color:var(--text);font-size:13px;padding:9px 12px}
+.room{display:flex;align-items:center;gap:8px;font-weight:600;min-width:170px}
+.ricon{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;flex:none}
+.ricon svg{width:14px;height:14px}
+.cardchip{display:inline-block;font-size:12px;padding:1px 7px;border-radius:5px;margin:2px 4px 2px 0;background:var(--panel3)}
+.cardchip.pick{background:rgba(95,211,141,.15);color:var(--good);font-weight:600}
+.cardchip.skip{color:var(--faint);text-decoration:line-through}
+.cardchip.buy{background:rgba(95,211,141,.15);color:var(--good)}
+.xline{font-size:12px;margin-top:2px}
+.endline{margin-top:14px;padding:12px 14px;border-radius:var(--r-sm);background:rgba(255,107,107,.08);color:var(--bad);font-size:13.5px}
+
+/* modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;place-items:center;z-index:50}
+.modal-bg.show{display:grid}
+.modal{background:var(--panel);border:1px solid var(--border2);border-radius:16px;padding:22px;width:min(640px,92vw);box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.modal h3{margin:0 0 4px}
+.modal input{width:100%;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r-sm);padding:10px 12px;color:var(--text);font:inherit;font-size:13px;margin:12px 0}
+.modal .row{display:flex;gap:10px;justify-content:flex-end}
+.modal .err{color:var(--bad);font-size:13px;min-height:18px}
+.loading{color:var(--faint);padding:30px}
+@media (max-width:1250px){.cards{grid-template-columns:repeat(3,minmax(0,1fr))}.ct-wrap{grid-template-columns:1fr}.detail{position:static}.ap-wrap{grid-template-columns:1fr}.runlist{max-height:340px}.grid3{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+body.still *{animation:none!important;transition:none!important}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand"><div class="logo">S2</div><div><b>STS2 Coach</b><span>version 2</span></div></div>
+    <div class="side-label">Characters</div>
+    <nav class="chars" id="chars" aria-label="Characters"></nav>
+    <div class="side-bottom">
+      <div class="side-label">Options</div>
+      <label class="switch"><input type="checkbox" id="optQuits"><span class="track"></span>Count quits as losses</label>
+      <label class="switch"><input type="checkbox" id="optCoop" checked><span class="track"></span>Include co-op runs</label>
+      <label class="switch"><input type="checkbox" id="optAuto" checked><span class="track"></span>Auto-refresh on new runs</label>
+      <div style="display:flex;gap:8px;margin-top:10px;padding:0 4px">
+        <button class="btn" id="folderBtn">Change folder…</button>
+        <button class="btn" id="reloadBtn" title="Re-read all runs">Refresh</button>
+      </div>
+      <div class="status" id="status">Loading…</div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <div class="banner">
+    <div class="title-row">
+      <h1><span class="tdot"></span><span id="title">All characters</span></h1>
+      <span class="subtitle" id="subtitle"></span>
+      <div class="seg modeseg" id="modeSeg" role="group" aria-label="Layout mode"></div>
+    </div>
+    <div class="filters">
+      <span class="flabel">Ascension</span>
+      <select class="select" id="asc" aria-label="Ascension filter"></select>
+      <span class="flabel" style="margin-left:14px">Runs</span>
+      <div class="seg" id="range" role="group" aria-label="Run range"></div>
+      <span class="build" id="build"></span>
+    </div>
+    </div>
+    <section class="cards" id="cards"></section>
+
+    <nav class="tabs" id="tabs" aria-label="Views">
+      <button class="tab" data-tab="dash">Dashboard</button>
+      <button class="tab adv" data-tab="habits">Habits &amp; Fixes</button>
+      <button class="tab adv" data-tab="stats">Stats</button>
+      <button class="tab" data-tab="autopsy">Run Autopsy</button>
+    </nav>
+    <div id="view"><div class="loading">Loading your runs…</div></div>
+  </main>
+</div>
+
+<div class="modal-bg" id="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+    <h3 id="mTitle">History folder</h3>
+    <div class="dim" style="font-size:13px">The folder with your finished <b>.run</b> files. It is only read, never written to. Your choice is saved in <b>settings.json</b> inside the sts2_coach_v2 folder.</div>
+    <input id="mPath" spellcheck="false" aria-label="History folder path">
+    <div class="err" id="mErr"></div>
+    <div class="row">
+      <button class="btn" id="mBrowse">Browse…</button>
+      <span style="flex:1"></span>
+      <button class="btn" id="mCancel">Cancel</button>
+      <button class="btn primary" id="mSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ===================== Python-compatible number formatting ===================== */
+// f"{x:.Nf}" in Python rounds exact halves to even; JS rounds them up. This matches Python exactly,
+// so every number here is identical to the old version.
+function pyFixed(x, d) {
+  if (x === null || x === undefined || Number.isNaN(x)) return "-";
+  const neg = x < 0 || Object.is(x, -0);
+  const s = Math.abs(x).toFixed(Math.min(100, d + 60));
+  const [ip, fp = ""] = s.split(".");
+  let keep = ip + fp.slice(0, d);
+  const rest = fp.slice(d);
+  let up = false;
+  if (rest.length) {
+    if (rest[0] > "5") up = true;
+    else if (rest[0] === "5") up = /[1-9]/.test(rest.slice(1)) ? true : (parseInt(keep[keep.length - 1], 10) % 2 === 1);
+  }
+  if (up) {
+    const a = keep.split(""); let i = a.length - 1;
+    while (i >= 0) { if (a[i] === "9") { a[i] = "0"; i--; } else { a[i] = String(+a[i] + 1); break; } }
+    if (i < 0) a.unshift("1");
+    keep = a.join("");
+  }
+  let out = d ? keep.slice(0, keep.length - d) + "." + keep.slice(keep.length - d) : keep;
+  if (out.startsWith(".")) out = "0" + out;
+  out = out.replace(/^0+(?=\d)/, "");
+  return (neg ? "-" : "") + out;
+}
+function pySigned(x, d) {
+  if (x === null || x === undefined || Number.isNaN(x)) return "-";
+  return ((x < 0 || Object.is(x, -0)) ? "-" : "+") + pyFixed(Math.abs(x), d);
+}
+const f0 = x => pyFixed(x, 0), f1 = x => pyFixed(x, 1), f2 = x => pyFixed(x, 2);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const $ = s => document.querySelector(s);
+
+/* ===================== bridge to Python ===================== */
+const MODE = new URLSearchParams(location.search).get("mode") === "browser" ? "browser" : "webview";
+function api(name, ...args) {
+  if (MODE === "webview") return window.pywebview.api[name](...args);
+  return fetch("/api/" + name, {method: "POST", body: JSON.stringify(args)}).then(r => r.json());
+}
+function apiReady() {
+  return new Promise(res => {
+    if (MODE === "browser") return res();
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.query) return res();
+    window.addEventListener("pywebviewready", () => res(), {once: true});
+  });
+}
+
+/* ===================== state ===================== */
+const ALL = "All characters";
+const RANGES = ["All runs", "Last 30", "Last 50", "Current build"];
+const S = {
+  character: ALL, asc: "All", range: "All runs", quits: false, coop: true, auto: true,
+  tab: "dash", feedOpen: null, feedN: 12, sub: "guide", dec: "elites", stripMode: "latest", tpOnly: false, mode: "compact", biome: "All acts", minAll: 8, minBiome: 3,
+  killer: null, selRun: null, selCard: null, sort: {key: "score", desc: true}, search: "",
+  expanded: new Set(), autoExpand: true,
+};
+let D = null, INIT = null, charts = {}, newRunNote = "";
+
+function params() {
+  return {character: S.character, asc: S.asc, range: S.range, include_abandoned: S.quits,
+          include_multi: S.coop, biome: S.biome, min_picks: S.biome === "All acts" ? S.minAll : S.minBiome,
+          killer: S.killer};
+}
+const THEMES = {Ironclad: "#e5484d", Silent: "#34d399", Defect: "#4c8dff", Necrobinder: "#a78bfa", Regent: "#f0b44c", Fool: "#f472b6"};
+function charColor(name) {
+  if (!name || name === ALL) return "#7d93b5";
+  if (THEMES[name]) return THEMES[name];
+  const e = D && D.sidebar.find(x => x.name === name);
+  return (e && e.color) || "#7d93b5";
+}
+function hexToRgba(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
+}
+
+/* ===================== loading ===================== */
+let busy = false, again = false;
+async function refresh() {
+  if (busy) { again = true; return; }
+  busy = true;
+  try {
+    const res = await api("query", params());
+    if (res && res.error) { $("#view").innerHTML = `<div class="empty"><b>Something went wrong</b>${esc(res.error)}<br>Details were written to sts2_coach_v2.log.</div>`; return; }
+    D = res;
+    S.character = D.effective.character; S.asc = D.effective.asc; S.biome = D.effective.biome;
+    renderAll();
+  } finally {
+    busy = false;
+    if (again) { again = false; refresh(); }
+  }
+}
+
+function renderAll() {
+  const col = charColor(S.character);
+  document.documentElement.style.setProperty("--accent", col);
+  document.documentElement.style.setProperty("--accent-soft", hexToRgba(col, .14));
+  document.documentElement.style.setProperty("--accent-tint", hexToRgba(col, .11));
+  document.documentElement.style.setProperty("--accent-line", hexToRgba(col, .32));
+  document.body.classList.toggle("compact", S.mode === "compact");
+  if (S.mode === "compact" && (S.tab === "stats" || S.tab === "habits")) S.tab = "dash";
+  $("#modeSeg").innerHTML = [["compact", "Compact"], ["advanced", "Advanced"]].map(([k, l]) => `<button data-mode="${k}" class="${S.mode === k ? "on" : ""}">${l}</button>`).join("");
+  renderSidebar(); renderHeader(); renderTabs(); renderView();
+}
+
+/* ===================== sidebar / header ===================== */
+function renderSidebar() {
+  $("#chars").innerHTML = D.sidebar.map(e => `
+    <button class="char ${e.name === S.character ? "sel" : ""}" data-char="${esc(e.name)}" style="--c:${e.name === ALL ? "#e9edf3" : charColor(e.name)}">
+      <i class="dot"></i><span>${esc(e.name)}</span>
+      <span class="rec num">${e.w}-${e.l}</span><span class="pct num ${e.pct >= 25 ? "hi" : ""}">${f0(e.pct)}%</span>
+    </button>`).join("");
+  const st = D.status;
+  $("#status").innerHTML = st.folder_ok
+    ? `${st.loaded} runs loaded · updated ${st.time}${newRunNote ? "<br>" + esc(newRunNote) : ""}`
+    : `<span class="warn">History folder not found.</span> Click “Change folder…”.`;
+}
+function renderHeader() {
+  const h = D.header;
+  $("#title").textContent = h.title;
+  $("#subtitle").textContent = h.subtitle;
+  $("#asc").innerHTML = D.asc_values.map(v => `<option ${v === S.asc ? "selected" : ""}>${esc(v)}</option>`).join("");
+  $("#range").innerHTML = RANGES.map(r => `<button class="${r === S.range ? "on" : ""}" data-range="${r}">${r}</button>`).join("");
+  $("#build").textContent = D.current_build ? "current build " + D.current_build : "";
+  const tone = {good: "good", warn: "warn", bad: "bad"};
+  let html = h.cards.map((c, i) => `<div class="stat ${i >= 2 ? "adv" : ""}"><div class="v num ${tone[c.tone] || ""}">${esc(c.value)}</div><div class="c">${esc(c.caption)}</div></div>`).join("");
+  html += `<div class="stat"><div class="strip">${h.last10.map(w => `<i class="${w ? "w" : "l"}" title="${w ? "Win" : "Loss"}"></i>`).join("")}</div>
+           <div class="c">${h.last10.length ? "Last 10 results (oldest → newest)" : "No finished runs yet"}</div></div>`;
+  $("#cards").innerHTML = html;
+}
+function renderTabs() {
+  document.body.classList.toggle("dash", S.tab === "dash");
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
+}
+function renderView() {
+  Object.values(charts).forEach(c => c.destroy()); charts = {};
+  const v = $("#view");
+  if (S.tab === "dash") v.innerHTML = viewDash();
+  else if (S.tab === "habits") v.innerHTML = viewHabits();
+  else if (S.tab === "stats") v.innerHTML = viewStats();
+  else v.innerHTML = viewAutopsyShell();
+  v.classList.remove("fade-in"); void v.offsetWidth; v.classList.add("fade-in");
+  if (S.tab === "stats" && S.sub === "overview") drawOverviewCharts();
+  if (S.tab === "stats" && S.sub === "table") loadCardDetail();
+  if (S.tab === "autopsy") loadAutopsy();
+  if (S.tab === "dash" && S.feedOpen) { const el = document.getElementById("fb-" + S.feedOpen.replace(/\W/g, "_")); if (el) fillAutopsy(el, S.feedOpen); }
+}
+
+/* ===================== Habits & Fixes ===================== */
+function bar(label, value, color, count) {
+  return `<div class="bar"><span class="lbl">${esc(label)}</span><span class="trk"><i style="width:${Math.max(1, value || 0)}%;background:${color}"></i></span><span class="num">${f0(value || 0)}%  <span class="faint">(${esc(count)})</span></span></div>`;
+}
+function viewHabits() {
+  if (S.mode === "compact") return viewCompact();
+  const H = D.habits;
+  let out = gameplanHtml(H.gameplan) + stripHtml(D.strip) + pairsHtml(D.pairs);
+  if (H.n_losses < 2) {
+    return out + `<div class="empty"><b>Not enough losses yet to find patterns.</b>Play a few more runs with ${esc(H.who)} and this page will rank the habits that keep ending your runs.</div>`;
+  }
+  out += `<div class="section-title">Run-killing habits · based on ${H.n_losses} losses and ${H.n_wins} wins</div>
+          <div class="section-sub">Ranked by how much more often they show up in your losses than in your wins.</div>`;
+  if (!H.items.length) out += `<div class="empty"><b class="good">No recurring run-killing habit found. Nice!</b></div>`;
+  S.autoExpand = false;
+  const sevCol = {high: "var(--bad)", med: "var(--warn)", low: "var(--info)"};
+  const sevLbl = {high: "Major leak", med: "Leak", low: "Minor"};
+  for (const it of H.items) {
+    const c = sevCol[it.sev];
+    out += `<div class="habit"><div class="stripe" style="background:${c}"></div><div class="hb">
+      <div class="ht"><span class="rank">${it.rank}</span><span class="title">${esc(it.title)}</span>
+        <span class="badge" style="background:${c};color:#0b0e13">${sevLbl[it.sev]}</span></div>
+      <div style="margin-top:10px">${bar("In your losses", it.loss_rate, c, `${it.loss_hits}/${it.loss_n}`)}
+        ${it.show_win_bar ? bar("In your wins", it.win_rate, "var(--good)", `${it.win_hits}/${it.win_n}`) : ""}</div>
+      <div class="nums">${esc(it.nums)}</div>
+      <details data-hid="${it.id}" ${S.expanded.has(it.id) ? "open" : ""}>
+        <summary><span class="car">▸</span>Why it matters &amp; what to do <span class="faint" style="font-weight:600">(${it.fix.length} tips)</span></summary>
+        <div class="why" style="margin-top:8px">${esc(it.why)}</div>
+        <ul>${it.fix.map(t => `<li>${esc(t)}</li>`).join("")}</ul>
+      </details>
+      ${it.examples.length ? `<div class="examples">Recent examples:${it.examples.map(e => `<span class="chip link" data-run="${esc(e.file)}">${esc(e.label)}</span>`).join("")}</div>` : ""}
+    </div></div>`;
+  }
+  if (H.fine.length) {
+    out += `<div class="section-title" style="margin-top:18px">Under control</div><div class="fine" style="margin-top:8px">${H.fine.map(t => `<div>✓  ${esc(t)}</div>`).join("")}</div>`;
+  }
+  return out;
+}
+/* ===================== Dashboard ===================== */
+function donutSvg(pct) {
+  const R = 54, C = 2 * Math.PI * R, v = Math.max(0, Math.min(100, pct));
+  return `<svg width="132" height="132" viewBox="0 0 132 132"><circle cx="66" cy="66" r="${R}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="12"/>
+    <circle cx="66" cy="66" r="${R}" fill="none" stroke="var(--accent)" stroke-width="12" stroke-linecap="round" stroke-dasharray="${(C * v / 100).toFixed(1)} ${C.toFixed(1)}"/></svg>`;
+}
+function viewDash() {
+  const Sm = D.dash;
+  const tiles = Sm.tiles.map(t => `<div class="kpi" title="${esc(t.tip)}"><div class="kv num">${esc(t.value)}</div><div class="kl">${esc(t.label)}</div>
+      <div class="grade ${t.grade || "N"}">${t.grade || "–"}</div></div>`).join("");
+  const top = `<div class="panel dtop"><div class="donut">${donutSvg(Sm.wr)}<div class="mid"><div><b class="num">${f0(Sm.wr)}%</b><span class="num">${Sm.w}W · ${Sm.l}L</span></div></div></div>
+    <div class="kpis">${tiles}</div></div>`;
+
+  const cards = D.table.filter(x => x.delta !== null && x.np >= 3).sort((a, b) => b.np - a.np || b.delta - a.delta).slice(0, 8);
+  const crow = cards.map(x => `<div class="crow"><span class="cn" title="${esc(x.card)}">${esc(x.card)}</span><span class="cp num">${x.np}</span>
+      <div class="wbar"><i style="width:${Math.max(2, x.wr_p)}%"></i><b class="num">${f0(x.wr_p)}%</b></div>
+      <span class="lift num ${x.delta >= 5 ? "good" : x.delta <= -5 ? "bad" : ""}">${pySigned(x.delta, 0)}</span></div>`).join("");
+  const cardPanel = `<div class="panel"><div class="dh"><h3>Card performance</h3><span class="tag">PICKS · WIN % · LIFT</span></div>${crow || `<div class="faint">–</div>`}</div>`;
+
+  const P = D.pairs;
+  let prow = "";
+  if (P && P.single) prow = P.missed.slice(0, 5).map(m => `<div class="prow"><span class="pn" title="${esc(m.partner)} + ${esc(m.card)}">${esc(m.partner)} + ${esc(m.card)}</span>
+      <span class="pw num">${f0(pct100(m.w, m.n))}%</span><span class="ps num">Skipped ${m.times}x</span></div>`).join("");
+  const pairPanel = `<div class="panel"><div class="dh"><h3>Missed pairs</h3><span class="tag">PAIR WIN % · SKIPPED</span></div>${prow || `<div class="faint">${P && P.single ? "–" : "Pick a character"}</div>`}</div>`;
+
+  const shown = D.feed.slice(0, S.feedN);
+  const resLbl = {WIN: "WIN", LOSS: "LOSS", ABANDONED: "QUIT"};
+  const resCls = {WIN: "good", LOSS: "bad", ABANDONED: "faint"};
+  const feed = shown.map(r => {
+    const open = S.feedOpen === r.file;
+    const who = S.character === ALL ? `${esc(r.character)} · ` : "";
+    return `<div class="fitem ${r.result} ${open ? "open" : ""}"><div class="frow" data-feed="${esc(r.file)}">
+      <div class="fres"><b class="${resCls[r.result]}">${resLbl[r.result]} · F${r.final_floor}</b><small>${who}${esc(r.date)} · A${r.ascension}</small></div>
+      <div class="fkill">${r.result === "WIN" ? "Victory" : esc(r.killer || "–")}</div>
+      <div class="fbadges">${r.badges.map(b => `<span class="pill ${b.k}">${esc(b.label)}</span>`).join("")}</div>
+      <button class="ftog" aria-label="Expand run">▾</button></div>
+      <div class="fbody" id="fb-${esc(r.file.replace(/\W/g, "_"))}"></div></div>`;
+  }).join("");
+  const more = D.feed.length > S.feedN ? `<button class="btn more" data-more="1">Show more</button>` : "";
+  const feedPanel = `<div><div class="dh"><h3>Recent runs</h3><span class="tag">${D.feed.length} SHOWN</span></div>${feed || `<div class="faint">–</div>`}${more}</div>`;
+  return top + `<div class="dcols"><div class="stack">${cardPanel}${pairPanel}</div>${feedPanel}</div>`;
+}
+const pct100 = (a, b) => b ? 100 * a / b : 0;
+
+/* ===================== Compact mode ===================== */
+function viewCompact() {
+  const G = D.habits.gameplan;
+  let cells = "";
+  for (let i = 0; i < 2; i++) {
+    const f = G.fixes[i];
+    if (!f) {
+      const msg = (G.fixes.length || G.n_dec >= 3) ? "No other leak above 25% - keep it up." : "Not enough finished runs yet.";
+      cells += `<div class="gp-cell"><div class="gp-k"><span>Priority ${i + 1}</span></div><div class="${G.n_dec >= 3 ? "good" : "dim"}" style="margin-top:8px">${msg}</div></div>`;
+      continue;
+    }
+    const l10 = f.last10 || f.last5;
+    const ok = l10.filter(Boolean).length;
+    const tone = ok >= 7 ? "good" : ok >= 4 ? "warn" : "bad";
+    cells += `<div class="gp-cell"><div class="gp-k"><span>Priority ${i + 1}</span><span class="${tone}">${ok}/${l10.length} recent runs ok</span></div>
+      <div class="gp-t">${esc(f.title)}</div>
+      <div class="trend" title="Last ${l10.length} runs, oldest to newest (green = handled well, red = leaked)">${[...l10].reverse().map(v => `<i class="${v ? "ok" : "bad"}"></i>`).join("")}</div>
+      <div class="gp-target">${esc(f.target)}</div></div>`;
+  }
+  const gp = `<div class="gameplan"><div class="gp-head"><h2>Next Run Gameplan</h2><span class="faint" style="font-size:12.5px">${esc(G.scope)}</span></div>
+    <div class="cmp-grid">${cells}</div></div>`;
+  return gp + pairsHtml(D.pairs, true) + stripHtml(D.strip, true);
+}
+
+/* ===================== Floor strip + missed pairings ===================== */
+function stripHtml(T, compact) {
+  if (!T || (!T.latest && !T.avg_loss)) return "";
+  if (compact) S.stripMode = "latest";
+  const avgOk = !!T.avg_loss;
+  if (S.stripMode === "avg" && !avgOk) S.stripMode = "latest";
+  const mode = S.stripMode;
+  let floors, head;
+  if (mode === "avg") {
+    floors = T.avg_loss.floors;
+    head = `Average of your last ${T.avg_loss.n} losses · each block is the average on that floor`;
+  } else if (T.latest) {
+    floors = T.latest.floors;
+    const rc = {WIN: "good", LOSS: "bad"}[T.latest.result] || "faint";
+    head = `Your latest run · ${esc(T.latest.date)} · <span class="${rc}">${T.latest.result.toLowerCase()}</span> · <span class="chip link" data-run="${esc(T.latest.file)}">open in Run Autopsy</span>`;
+  } else return "";
+  const rowsOf = (fn, cls) => { let o = "", act = null; for (const f of floors) { if (act !== null && f.act !== act) o += `<u></u>`; act = f.act; o += `<i class="${cls(f)}" title="${esc(fn(f))}"></i>`; } return o; };
+  let tick = "", act = null;
+  for (const f of floors) { if (act !== null && f.act !== act) tick += `<u></u>`; act = f.act; tick += `<i>${f.floor % 5 === 0 || f.floor === 1 ? f.floor : ""}</i>`; }
+  const isAvg = mode === "avg";
+  const gTip = f => isAvg ? `Floor ${f.floor}: average ${f0(f.gold)} gold held (${f.n} losses)` : `Floor ${f.floor} · ${f.label}: ${f.gold} gold held`;
+  const hTip = f => isAvg ? `Floor ${f.floor}: average ${f1(f.dmg)} HP lost (${f.n} losses)` : `Floor ${f.floor} · ${f.label}: lost ${f.dmg} HP`;
+  const cTip = f => isAvg ? `Floor ${f.floor}: ${f.card ? (f.pick_pct === null ? "" : f0(f.pick_pct) + "% picked a card") : "no card reward"}` :
+    `Floor ${f.floor} · ${f.label}: ${f.card === "pick" ? "picked a card" : f.card === "skip" ? "skipped the card reward" : "no card reward"}`;
+  const toggle = compact ? "" : `<div class="seg"><button data-strip="latest" class="${mode === "latest" ? "on" : ""}">Latest run</button><button data-strip="avg" class="${mode === "avg" ? "on" : ""}" ${avgOk ? "" : "disabled title='Needs 3+ losses'"}>Average loss</button></div>`;
+  return `<div class="panel strip-panel" style="margin-bottom:14px"><div class="tphead"><div><h3>Floor-by-floor strip</h3><div class="sub">${head}</div></div>${toggle}</div>
+    <div class="body" style="margin-top:12px">
+      <div class="srow"><span class="sl">Gold held</span><div class="sblocks">${rowsOf(gTip, f => "l" + f.gold_lvl)}</div></div>
+      <div class="srow"><span class="sl">HP lost</span><div class="sblocks">${rowsOf(hTip, f => "l" + f.hp_lvl)}</div></div>
+      <div class="srow"><span class="sl">Card reward</span><div class="sblocks">${rowsOf(cTip, f => f.card || "")}</div></div>
+      <div class="srow"><span class="sl"></span><div class="sblocks ticks">${tick}</div></div>
+      <div class="slegend"><span><b style="background:var(--good)"></b>Gold under 100 · HP lost under ${isAvg ? "10" : "15"}% of max · card picked</span><span><b style="background:var(--warn)"></b>Gold 100-149 · ${isAvg ? "10-19" : "15-29"}% · card skipped</span><span><b style="background:var(--bad)"></b>Gold 150+ · ${isAvg ? "20" : "30"}%+ of max HP</span><span><b style="background:var(--panel3)"></b>No card reward</span><span>Hover a block for the exact floor</span></div></div></div>`;
+}
+function pairsHtml(P, compact) {
+  if (!P) return "";
+  if (!P.single) return `<div class="panel" style="margin-bottom:14px"><h3>Missed pairings</h3><div class="sub">Pick a character in the sidebar - card pairs only make sense within one character.</div></div>`;
+  const top = P.top_pairs.length ? P.top_pairs.map(x => `<span class="pchip"><span data-card="${esc(x.a)}" class="link">${esc(x.a)}</span> + <span data-card="${esc(x.b)}" class="link">${esc(x.b)}</span> · in <b>${f0(x.win_share)}%</b> of wins · <b>${pySigned(x.lift, 0)}</b> pts</span>`).join("")
+    : `<span class="faint">No pair yet: needs ${P.min_runs}+ runs and ${P.min_wins}+ wins together, and a win-rate lift of ${P.min_lift}+ points.</span>`;
+  const rows = P.missed.length ? P.missed.map(m => `<div class="pairrow"><div><div class="pt">Skipped <b>${esc(m.card)}</b> while holding <b>${esc(m.partner)}</b></div>
+      <div class="pn">Paired in ${f0(m.win_share)}% of your wins · <span class="good">${pySigned(m.lift, 0)}% win lift</span> (${m.w}/${m.n} runs with both won) · skipped in ${m.times} loss${m.times === 1 ? "" : "es"}</div></div>
+      <div>${m.examples.map(e => `<span class="chip link" data-run="${esc(e.file)}">${esc(e.label)}</span>`).join("")}</div></div>`).join("")
+    : `<div class="faint" style="padding:8px 0">${P.n_strong ? "No losing run skipped a card that completes one of your winning pairs. Nice." : "Not enough winning runs yet to find pairs."}</div>`;
+  if (compact) {
+    const r3 = P.missed.slice(0, 3).map(m => `<div class="pairrow"><div class="pt">Skipped <b>${esc(m.card)}</b> while holding <b>${esc(m.partner)}</b>
+        <div class="pn">paired in ${f0(m.win_share)}% of your wins · <span class="good">${pySigned(m.lift, 0)}% win lift</span></div></div>
+        <div>${m.examples.slice(0, 3).map(e => `<span class="chip link" data-run="${esc(e.file)}">${esc(e.label)}</span>`).join("")}</div></div>`).join("");
+    return `<div class="panel" style="margin-bottom:14px"><h3>Top missed pairings</h3><div class="sub">Cards you skipped that complete a pair from your own winning decks.</div>
+      <div class="body" style="margin-top:6px">${r3 || `<div class="faint" style="padding:8px 0">${P.n_strong ? "No losing run skipped a card that completes one of your winning pairs. Nice." : "Not enough winning runs yet to find pairs."}</div>`}</div></div>`;
+  }
+  return `<div class="panel" style="margin-bottom:14px"><h3>Missed pairings from your own wins</h3>
+    <div class="sub">Pairs of cards that sit together in your winning decks and lift your win rate - then the times you skipped one while holding the other in a loss.</div>
+    <div class="body" style="margin-top:10px"><div class="k" style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin-bottom:6px">Your strongest pairs (${P.n_wins} wins)</div>${top}
+    <div class="k" style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin:12px 0 2px">Missed in your losses</div>${rows}</div></div>`;
+}
+function gameplanHtml(G) {
+  let cells = "";
+  for (let i = 0; i < 2; i++) {
+    const f = G.fixes[i];
+    if (!f) {
+      const msg = (G.fixes.length || G.n_dec >= 3) ? "No other leak above 25% in these runs - keep it up." : "Not enough finished runs yet.";
+      cells += `<div class="gp-cell"><div class="gp-k" style="color:var(--faint)">Priority ${i + 1}</div><div class="${G.n_dec >= 3 ? "good" : "dim"}" style="margin-top:6px">${msg}</div></div>`;
+      continue;
+    }
+    const ok = f.last5.filter(Boolean).length;
+    const tone = ok >= 4 ? "good" : ok >= 2 ? "warn" : "bad";
+    cells += `<div class="gp-cell"><div class="gp-k"><span>Priority ${i + 1}</span><span class="bad">${f0(f.rate)}% leak</span></div>
+      <div class="gp-t">${esc(f.title)}</div><div class="gp-d">${esc(f.detail)}</div>
+      <div class="gp-target"><b>Target:</b> ${esc(f.target)}</div>
+      <div><span class="dots">${[...f.last5].reverse().map(v => `<i style="background:${v ? "var(--good)" : "var(--bad)"}"></i>`).join("")}</span>
+      <span class="${tone}" style="font-size:12.5px">${ok}/${f.last5.length} recent runs ${esc(f.ok_word)}</span></div></div>`;
+  }
+  let w = `<div class="gp-cell"><div class="gp-k"><span>Draft watchlist · ${G.min_picks}+ picks</span></div>`;
+  if (!G.single) w += `<div class="dim" style="margin-top:6px">Pick a character in the sidebar to see which cards to look for and avoid.</div>`;
+  else if (!G.watch.best && !G.watch.trap) w += `<div class="dim" style="margin-top:6px">No card has ${G.min_picks}+ picks with these filters yet.</div>`;
+  else for (const [lbl, x, col] of [["LOOK FOR", G.watch.best, "var(--good)"], ["AVOID", G.watch.trap, "var(--bad)"]]) {
+    if (!x) { w += `<div class="watch" style="cursor:default"><div class="row1" style="color:${col}">${lbl}</div><div class="faint" style="font-size:12px">nothing clear yet</div></div>`; continue; }
+    w += `<div class="watch" data-card="${esc(x.card)}"><div class="row1" style="color:${col}"><span>${lbl}</span><span style="font-size:15px">${pySigned(x.delta, 0)}</span></div>
+      <div class="nm">${esc(x.card)}</div><div class="meta">win ${f0(x.wr_p)}% taken · ${f0(x.wr_s)}% skipped · ${x.np} picks</div></div>`;
+  }
+  w += `</div>`;
+  return `<div class="gameplan"><div class="gp-head"><h2>Next Run Gameplan</h2><span class="faint" style="font-size:12.5px">${esc(G.scope)}</span></div>
+    <div class="grid3">${cells}${w}</div></div>`;
+}
+
+/* ===================== Stats ===================== */
+function viewStats() {
+  const subs = [["guide", "Draft Guide"], ["overview", "Overview"], ["decisions", "Decisions"], ["table", "Card Table"]];
+  let bar = `<div class="subbar"><div class="seg">${subs.map(([k, l]) => `<button data-sub="${k}" class="${S.sub === k ? "on" : ""}">${l}</button>`).join("")}</div>`;
+  if (S.sub !== "overview" && S.sub !== "decisions") {
+    const mp = S.biome === "All acts" ? S.minAll : S.minBiome;
+    bar += `<div class="seg">${D.biomes.map(b => `<button data-biome="${esc(b)}" class="${b === S.biome ? "on" : ""}">${esc(b)}</button>`).join("")}</div>
+      <div class="slider"><span class="flabel">Min picks</span><input type="range" id="minPicks" min="3" max="25" value="${mp}" aria-label="Minimum picks"><span class="val num" id="minVal">${mp}</span></div>`;
+  }
+  bar += `</div>`;
+  if (S.sub === "guide") return bar + viewGuide();
+  if (S.sub === "overview") return bar + viewOverview();
+  if (S.sub === "decisions") return bar + viewDecisions();
+  return bar + viewTable();
+}
+function tile(x, color) {
+  const conf = x.np >= 8 ? "●●●" : x.np >= 5 ? "●●○" : "●○○";
+  const ncol = {good: "var(--good)", warn: "var(--warn)", bad: "var(--bad)"};
+  return `<div class="tile" data-card="${esc(x.card)}"><div class="t1"><span class="nm">${esc(x.card)}</span><span class="lift num" style="color:${color}">${pySigned(x.delta, 0)}</span></div>
+    <div class="t2"><span>win ${f0(x.wr_p)}% taken · ${f0(x.wr_s)}% skipped · ${x.np} picks</span><span class="conf">${conf}</span></div>
+    ${x.notes.length ? `<div class="notes">${x.notes.map(([t, c]) => `<span class="note" style="color:${ncol[c]}">${esc(t)}</span>`).join("")}</div>` : ""}</div>`;
+}
+function viewGuide() {
+  const G = D.guide;
+  if (G.empty) return `<div class="empty">No runs with the current filters.</div>`;
+  const R = G.rewards;
+  let out = `<div class="section-title" style="font-size:20px;margin-bottom:12px">${esc(G.title)}</div><div class="mini">
+    <div class="stat"><div class="v num">${R.rewards}</div><div class="c">card rewards ${esc(G.where)}</div></div>
+    <div class="stat"><div class="v num">${f0(R.pick)}%</div><div class="c">of rewards you take a card</div></div>`;
+  if (R.skip_win !== null && R.skip_loss !== null) {
+    const warn = Math.abs(R.skip_loss - R.skip_win) >= 8;
+    out += `<div class="stat"><div class="v num ${warn ? "warn" : ""}">${f0(R.skip_win)}% / ${f0(R.skip_loss)}%</div><div class="c">skip rate in wins / losses</div></div>`;
+  }
+  if (G.hall_turns !== null) out += `<div class="stat"><div class="v num">${f2(G.hall_turns)}</div><div class="c">avg turns per hallway fight here</div></div>`;
+  out += `</div>`;
+  if (G.tip) out += `<div class="tip">💡 ${esc(G.tip)}</div>`;
+  const spec = [["TAKE", "Cards that lift your win rate", "var(--good)", G.take],
+                ["FINE EITHER WAY", "No clear effect yet", "var(--dim)", G.okay],
+                ["SKIP", "Cards your losing runs are full of", "var(--bad)", G.skip]];
+  out += `<div class="grid3">` + spec.map(([t, sub, col, items]) => `<div class="panel"><div class="col-accent" style="background:${col}"></div>
+      <div class="col-head"><h3 style="color:${col}">${t} · ${items.length}</h3></div><div class="sub">${sub}</div><div class="body" style="margin-top:6px">
+      ${items.length ? items.slice(0, 12).map(x => tile(x, col === "var(--dim)" ? "var(--text)" : col)).join("") : `<div class="faint" style="font-size:12.5px;margin-top:8px">No cards here with ${G.n}+ picks.<br>Try lowering MIN PICKS.</div>`}
+      ${items.length > 12 ? `<div class="faint" style="font-size:12.5px;margin-top:8px">+${items.length - 12} more in Card Table</div>` : ""}</div></div>`).join("") + `</div>`;
+  out += `<div class="faint" style="font-size:12px;margin-top:14px">Lift = your win rate when you took the card minus when you skipped it, compared with your typical card here (${pySigned(G.base, 0)}). Cards need ${G.n}+ picks to be rated (${G.low} cards have too few). The dots show confidence: ●○○ few picks, ●●● many. Results, not card quality - small samples are hints, not rules. Click a card to open its details.</div>`;
+  return out;
+}
+function viewOverview() {
+  const O = D.overview;
+  if (O.empty) return `<div class="empty">No runs with the current filters.</div>`;
+  let fightRows = O.fights.map(r => {
+    const cell = (x, isHall) => x ? `<td class="r num ${isHall ? (r.limit && x.turns > r.limit ? "bad" : "good") : ""}">${f2(x.turns)}</td><td class="r num dim">${f1(x.dmg)}</td>` : `<td class="r faint">-</td><td></td>`;
+    const win = r.win ? `<td class="r num"><b class="${r.win.tone}">${f0(r.win.pct)}%</b> <span class="faint">(${r.win.w}/${r.win.n})</span></td>` : `<td class="r faint">-</td>`;
+    return `<tr><td class="nowrap"><b>Act ${r.act} · ${esc(r.name)}</b></td>${cell(r.monster, true)}${cell(r.elite)}${cell(r.boss)}<td class="r num dim">${r.fights}</td>${win}</tr>`;
+  }).join("");
+  const rewardRows = O.rewards.map(st => `<tr><td><b>${esc(st.name)}</b></td><td class="r num dim">${st.rewards}</td><td class="r num dim">${f0(st.pick)}%</td>
+      <td class="r num dim">${st.skip_win === null ? "-" : f0(st.skip_win) + "%"}</td><td class="r num ${st.flag ? "warn" : "dim"}">${st.skip_loss === null ? "-" : f0(st.skip_loss) + "%"}</td></tr>`).join("");
+  let leaks = O.nl ? O.leaks.map(l => bar(l.label, O.nl ? l.n / O.nl * 100 : 0, `var(--${l.tone})`, `${l.n}/${O.nl}`)).join("")
+      + `<div class="dim" style="font-size:12.5px;margin-top:10px">Average gold at death: ${f0(O.avg_gold_death)}</div>`
+      + (O.pots.length ? `<div class="faint" style="font-size:12px">Often held at death: ${O.pots.map(([p, k]) => `${esc(p)} ×${k}`).join(", ")}</div>` : "")
+    : `<div class="good">No losses here.</div>`;
+  let nem = O.nemesis.length ? O.nemesis.map(([n, k]) => `<tr class="click" data-killer="${esc(n)}"><td>${esc(n)}</td>
+      <td style="width:45%"><div class="trk" style="height:9px;border-radius:9px;background:var(--panel3);overflow:hidden"><i style="display:block;height:100%;width:${k / O.nemesis[0][1] * 100}%;background:var(--bad)"></i></div></td>
+      <td class="r num dim">${k}</td><td class="r info" style="font-size:12px">view runs →</td></tr>`).join("") : "";
+  return `<div class="stack">
+    <div class="panel"><h3>Win rate over time</h3><div class="sub">Each dot is a finished run (green = win). Line = win rate over your last 10 runs; dashed = overall.</div>
+      <div class="chartbox" style="height:220px"><canvas id="trendChart"></canvas></div></div>
+    <div class="panel"><h3>Fight speed by biome</h3><div class="sub">Average turns and damage per fight (red = slower than target). Win % = finished runs that went through that biome - for Act 1 that's the biome you started in.</div>
+      <div class="body" style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:18px;align-items:center">
+      <div class="scroll"><table class="tbl"><thead><tr><th>Biome</th><th class="r">Hallway turns</th><th class="r">Hallway dmg</th><th class="r">Elite turns</th><th class="r">Elite dmg</th><th class="r">Boss turns</th><th class="r">Boss dmg</th><th class="r">Fights</th><th class="r">Win %</th></tr></thead><tbody>${fightRows}</tbody></table></div>
+      <div class="chartbox" style="height:210px"><canvas id="speedChart"></canvas></div></div></div>
+    <div class="grid2">
+      <div class="panel"><h3>Card rewards by biome</h3><div class="sub">How often you take a card, and skip rate in wins vs losses.</div>
+        <div class="body"><table class="tbl"><thead><tr><th>Biome</th><th class="r">Rewards</th><th class="r">Take %</th><th class="r">Skip in wins</th><th class="r">Skip in losses</th></tr></thead><tbody>${rewardRows}</tbody></table></div></div>
+      <div class="panel"><h3>Leaks at death</h3><div class="sub">Based on ${O.nl} losses.</div><div class="body">${leaks}</div></div>
+    </div>
+    <div class="grid2">
+      <div class="panel"><h3>Nemesis list</h3><div class="sub">What ends your runs. Click an enemy to see the runs it ended.</div>
+        <div class="body">${nem ? `<table class="tbl"><tbody>${nem}</tbody></table><div class="faint" style="font-size:12px;margin-top:10px">${esc(O.death_text)}</div>` : `<div class="good">Nothing has killed you here yet.</div>`}</div></div>
+      <div class="panel"><h3>Record</h3><div class="body">${O.record.map(([t, c]) => `<div class="${c}" style="margin:3px 0">${esc(t)}</div>`).join("")}</div></div>
+    </div></div>`;
+}
+/* ===================== Decisions ===================== */
+function wrCell(x, base) {
+  if (!x || !x.n) return `<span class="faint">-</span>`;
+  let tone = "dim";
+  if (x.n >= 3 && base != null) tone = x.pct >= base + 10 ? "good" : (x.pct <= base - 10 ? "bad" : "dim");
+  return `<b class="num ${tone}">${f0(x.pct)}%</b> <span class="faint">(${x.w}/${x.n})</span>`;
+}
+function diffCell(a, b) {
+  if (!a || !b || a.n < 3 || b.n < 3) return `<span class="faint">-</span>`;
+  const d = a.pct - b.pct;
+  return `<b class="num ${d >= 10 ? "good" : d <= -10 ? "bad" : "dim"}">${d > 0 ? "+" : ""}${f0(d)}</b>`;
+}
+function viewDecisions() {
+  const X = D.decisions;
+  if (!X || !X.n_decided) return `<div class="empty">No finished runs with the current filters.</div>`;
+  const base = X.base.pct;
+  const secs = [["elites", "Elites per act"], ["camps", "Campfires"], ["shops", "Shops"], ["events", "Events"], ["ancients", "Ancient relics"]];
+  const nav = `<div class="subbar"><div class="seg">${secs.map(([k, l]) => `<button data-dec="${k}" class="${S.dec === k ? "on" : ""}">${l}</button>`).join("")}</div>
+    <span class="faint" style="font-size:12.5px">Your win rate here: <b>${f0(base)}%</b> over ${X.n_decided} finished runs. Green/red = 10+ points better/worse. Small samples (under 3) are not coloured.</span></div>`;
+  return nav + ({elites: decElites, camps: decCamps, shops: decShops, events: decEvents, ancients: decAncients}[S.dec] || decElites)(X, base);
+}
+function decElites(X, base) {
+  const panels = X.elites.map(a => {
+    const rows = a.buckets.map(b => `<tr><td><b>${b.label} elite${b.label === "1" ? "" : "s"}</b></td><td class="r num dim">${b.n}</td><td class="r">${wrCell(b, base)}</td></tr>`).join("");
+    return `<div class="panel"><h3>Act ${a.act}</h3><div class="sub">Runs that got through Act ${a.act}: ${a.finished}</div>
+      <div class="body"><table class="tbl"><thead><tr><th>Elites fought</th><th class="r">Runs</th><th class="r">Win rate</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="dim" style="font-size:12.5px;margin-top:10px">${a.fights} elite fights · avg ${a.avg_dmg === null ? "-" : f1(a.avg_dmg)} damage · avg ${a.avg_turns === null ? "-" : f1(a.avg_turns)} turns · <span class="${a.deaths ? "bad" : ""}">${a.deaths} death${a.deaths === 1 ? "" : "s"} to an elite</span></div></div></div>`;
+  }).join("");
+  return `<div class="section-sub">Does taking more elites help or hurt? Only runs that survived the act are counted, so early deaths don't fake the result.</div><div class="grid3">${panels}</div>`;
+}
+function decCamps(X, base) {
+  const C = X.camps;
+  const rows = C.rows.map(r => {
+    const warn = (r.kind === "Rest" && r.hp === "70%+") ? "Heal at high HP - a smith might have been better" : (r.kind === "Smith" && r.hp === "under 50%") ? "Upgrading while low" : "";
+    return `<tr><td><b>${r.kind}</b></td><td>${r.hp}</td><td class="r num">${r.n}</td><td class="r num dim">${f0(r.share)}%</td>
+      <td class="r num ${r.soon_pct >= 20 ? "bad" : "dim"}">${f0(r.soon_pct)}%</td><td class="faint" style="font-size:12px">${warn}</td></tr>`;
+  }).join("");
+  const sm = C.smith.map(b => `<tr><td><b>${b.label}</b></td><td class="r num dim">${b.n}</td><td class="r">${wrCell(b, base)}</td></tr>`).join("");
+  return `<div class="grid2">
+    <div class="panel"><h3>What you do at campfires</h3><div class="sub">HP is measured before the campfire. "Died soon" = the run ended within the next 3 floors.</div>
+      <div class="body"><table class="tbl"><thead><tr><th>Choice</th><th>HP before</th><th class="r">Times</th><th class="r">Share</th><th class="r">Died soon</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>
+    <div class="panel"><h3>Upgrades and win rate</h3><div class="sub">Only runs that reached Act 3 (${C.deep_n}), so short runs don't skew it.</div>
+      <div class="body"><table class="tbl"><thead><tr><th>Smiths in the run</th><th class="r">Runs</th><th class="r">Win rate</th></tr></thead><tbody>${sm}</tbody></table></div></div></div>`;
+}
+function decShops(X, base) {
+  const S2 = X.shops;
+  if (!S2.visited) return `<div class="empty">No shop visits with the current filters.</div>`;
+  const rows = S2.items.map(i => `<tr><td><b>${i.kind}</b></td><td class="r">${wrCell(i.yes, base)}</td><td class="r">${wrCell(i.no, base)}</td><td class="r">${diffCell(i.yes, i.no)}</td></tr>`).join("");
+  const rel = S2.relics.length ? S2.relics.map(r => `<tr><td>${esc(r.name)}</td><td class="r num dim">${r.n}</td><td class="r">${wrCell(r, base)}</td></tr>`).join("") : `<tr><td class="faint">No relic bought twice yet.</td></tr>`;
+  return `<div class="grid2">
+    <div class="panel"><h3>What you buy</h3><div class="sub">Win rate of runs that bought this vs runs that visited a shop and did not. ${S2.visited} runs visited a shop (${S2.visits} visits).</div>
+      <div class="body"><table class="tbl"><thead><tr><th>Item</th><th class="r">Bought it</th><th class="r">Didn't</th><th class="r">Diff</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="dim" style="font-size:12.5px;margin-top:10px">You leave a shop with <b>${f0(S2.avg_left)}</b> gold on average · <span class="${S2.leak_pct >= 20 ? "bad" : ""}">${f0(S2.leak_pct)}% of visits leave over 150 gold</span></div></div></div>
+    <div class="panel"><h3>Relics you buy</h3><div class="sub">Relics bought at least twice.</div>
+      <div class="body"><table class="tbl"><thead><tr><th>Relic</th><th class="r">Bought</th><th class="r">Win rate</th></tr></thead><tbody>${rel}</tbody></table></div></div></div>`;
+}
+function decEvents(X, base) {
+  if (!X.events.length) return `<div class="empty">No event choice made 3+ times yet.</div>`;
+  const rows = X.events.map(e => `<tr><td><b>${esc(e.event)}</b></td><td>${esc(e.choice)}</td><td class="r num">${e.times}</td><td class="r">${wrCell(e.win, base)}</td>
+    <td class="r">${e.other.n ? wrCell(e.other, base) : '<span class="faint">never chose otherwise</span>'}</td><td class="r num ${e.hp < -3 ? "bad" : e.hp > 3 ? "good" : "dim"}">${e.hp > 0 ? "+" : ""}${f1(e.hp)}</td>
+    <td class="r num ${e.gold < -30 ? "warn" : e.gold > 30 ? "good" : "dim"}">${e.gold > 0 ? "+" : ""}${f0(e.gold)}</td></tr>`).join("");
+  return `<div class="panel"><h3>Event choices</h3><div class="sub">Choices you made at least 3 times. "Win rate if other" = runs that met the same event but picked a different option. HP and gold are the average change on that floor.</div>
+    <div class="body scroll"><table class="tbl"><thead><tr><th>Event</th><th>Choice</th><th class="r">Times</th><th class="r">Win rate</th><th class="r">Win rate if other</th><th class="r">HP</th><th class="r">Gold</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+function decAncients(X, base) {
+  if (!X.ancients.length) return `<div class="empty">No relic offered 3+ times yet.</div>`;
+  const rows = X.ancients.map(a => `<tr><td class="dim">${a.group}</td><td><b>${esc(a.relic)}</b></td><td class="r num dim">${a.offered}</td><td class="r num dim">${f0(a.take_pct)}%</td>
+    <td class="r">${wrCell(a.win_taken, base)}</td><td class="r">${wrCell(a.win_passed, base)}</td><td class="r">${diffCell(a.win_taken, a.win_passed)}</td></tr>`).join("");
+  return `<div class="panel"><h3>Neow and Ancient relic choices</h3><div class="sub">Relics offered at least 3 times. Names only - the run files don't store descriptions. "Passed" = offered but you took something else.</div>
+    <div class="body scroll"><table class="tbl"><thead><tr><th>From</th><th>Relic</th><th class="r">Offered</th><th class="r">Taken</th><th class="r">Win rate if taken</th><th class="r">Win rate if passed</th><th class="r">Diff</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+const SORT_KEYS = {
+  card: x => x.card.toLowerCase(), verdict: x => ({TAKE: 0, OK: 1, SKIP: 2, LOW: 3})[x.verdict], offered: x => x.offered,
+  pick: x => x.pick_pct, wrp: x => x.wr_p ?? -1, wrs: x => x.wr_s ?? -1, lift: x => x.delta ?? -999,
+  deck: x => x.deck || 0, tempo: x => x.tempo ?? 99, removed: x => x.removed, flags: x => x.notes.length,
+  score: x => (x.score !== null && x.verdict !== "LOW") ? x.score : -999,
+};
+function tableRows() {
+  const q = S.search.trim().toLowerCase();
+  let rows = D.table.filter(x => !q || x.card.toLowerCase().includes(q));
+  const g = SORT_KEYS[S.sort.key];
+  rows = rows.map((x, i) => [x, i]).sort((a, b) => {
+    const va = g(a[0]), vb = g(b[0]);
+    const c = va < vb ? -1 : va > vb ? 1 : 0;
+    return (S.sort.desc ? -c : c) || a[1] - b[1];
+  }).map(p => p[0]);
+  return rows;
+}
+function viewTable() {
+  const cols = [["card", "Card", ""], ["verdict", "Verdict", ""], ["offered", "Offers", "r"], ["pick", "Pick %", "r"], ["wrp", "Win taken", "r"],
+                ["wrs", "Win skipped", "r"], ["lift", "Lift", "r"], ["deck", "Avg deck", "r"], ["tempo", "Tempo", "r"], ["removed", "Removed", "r"], ["flags", "Notes", ""]];
+  const head = cols.map(([k, l, cl]) => `<th class="sort ${cl}" data-sort="${k}">${l}${S.sort.key === k ? `<span class="arr">${S.sort.desc ? "↓" : "↑"}</span>` : ""}</th>`).join("");
+  return `<div class="ct-wrap"><div class="panel" style="padding:14px 14px 6px">
+      <div style="display:flex;align-items:center;gap:12px;margin:0 4px 10px"><input class="search" id="search" placeholder="Search cards…" value="${esc(S.search)}" aria-label="Search cards">
+      <span class="faint" id="tcount" style="font-size:12.5px"></span><span style="flex:1"></span><span class="faint" style="font-size:12px">Click a column to sort · click a card for details</span></div>
+      <div class="scroll" style="max-height:calc(100vh - 150px)"><table class="tbl" id="cardTable"><thead><tr>${head}</tr></thead><tbody id="tbody"></tbody></table></div></div>
+      <div class="panel detail" id="detail"></div></div>`;
+}
+function fillTable() {
+  const tb = $("#tbody"); if (!tb) return;
+  const rows = tableRows();
+  const lbl = {TAKE: ["✔ Take", "good"], SKIP: ["✖ Skip", "bad"], OK: ["Either", ""], LOW: ["few picks", "faint"]};
+  tb.innerHTML = rows.map(x => {
+    const [vl, vc] = lbl[x.verdict];
+    const rowc = x.verdict === "LOW" ? "faint" : "";
+    return `<tr class="click ${x.card === S.selCard ? "sel" : ""} ${rowc}" data-card="${esc(x.card)}">
+      <td><b class="${x.verdict === "TAKE" ? "good" : x.verdict === "SKIP" ? "bad" : ""}">${esc(x.card)}</b></td><td class="${vc}">${vl}</td>
+      <td class="r num">${x.offered}</td><td class="r num">${f0(x.pick_pct)}%</td>
+      <td class="r num">${x.wr_p === null ? "-" : `${f0(x.wr_p)}% <span class="faint">(${x.np})</span>`}</td>
+      <td class="r num">${x.wr_s === null ? "-" : `${f0(x.wr_s)}% <span class="faint">(${x.ns})</span>`}</td>
+      <td class="r num ${x.delta === null ? "" : x.delta > 0 ? "good" : x.delta < 0 ? "bad" : ""}">${x.delta === null ? "-" : pySigned(x.delta, 0)}</td>
+      <td class="r num">${x.deck === null ? "-" : f1(x.deck)}</td><td class="r num">${x.tempo === null ? "-" : pySigned(x.tempo, 2)}</td>
+      <td class="r num">${x.removed}</td><td class="dim" style="font-size:12px">${x.notes.map(n => esc(n[0])).join(", ")}</td></tr>`;
+  }).join("");
+  $("#tcount").textContent = `${rows.length} of ${D.table.length} cards`;
+}
+function wrRow(label, v, n, color) {
+  return `<div class="wr-row"><span class="dim">${esc(label)}</span><span class="trk">${v === null ? "" : `<i style="width:${Math.max(3, v)}%;background:${color}"></i>`}</span>
+    <span class="num ${v === null ? "faint" : ""}">${v === null ? "no runs" : `${f0(v)}%  <span class="faint">(${n})</span>`}</span></div>`;
+}
+async function loadCardDetail() {
+  fillTable();
+  const el = $("#detail"); if (!el) return;
+  if (S.character === ALL) {
+    el.innerHTML = `<h3>Card detail</h3><div class="dim" style="margin-top:6px">Pick a single character in the sidebar, then click a card to see its synergy breakdown (cards behave very differently across characters).</div>`;
+    return;
+  }
+  if (!S.selCard) {
+    el.innerHTML = `<h3>Card detail</h3><div class="dim" style="margin-top:6px">Click any card in the table to see whether it wins on its own, needs partners, or only works in a lean deck.</div>`;
+    return;
+  }
+  el.innerHTML = `<div class="loading" style="padding:10px 0">Loading ${esc(S.selCard)}…</div>`;
+  const res = await api("card_detail", params(), S.selCard);
+  if (!res || res.error) { el.innerHTML = `<div class="bad">Could not load card details.</div>`; return; }
+  const d = res.d, [ov, nov] = d.overall, L = res.lean_deck, B = res.bloat_deck;
+  let h = `<h2 style="margin:0;font-size:22px;letter-spacing:-.3px">${esc(res.card)}</h2>`;
+  if (ov === null) { el.innerHTML = h + `<div class="dim" style="margin-top:6px">This card never made it into a finished deck with the current filters (it may have been removed, or only appears in quit runs).</div>`; return; }
+  h += `<div class="dim" style="font-size:13px;margin-top:2px">In ${nov} finished deck${nov !== 1 ? "s" : ""} · win rate ${f0(ov)}%  (all biomes, current filters)</div>`;
+  const [lean, nl] = d.lean, [mid, nm] = d.mid, [blo, nb] = d.bloated;
+  h += `<div class="dsec"><div class="k">Win rate by deck size</div><div class="s">Deck size at the end of Act 2, in the ${d.late_n} runs with this card that reached Act 3 - same checkpoint for every run, so early deaths don't skew it.</div>
+    ${wrRow(`Lean (≤${L})`, lean, nl, "var(--good)")}${wrRow(`Middle (${L + 1}-${B - 1})`, mid, nm, "var(--info)")}${wrRow(`Bloated (${B}+)`, blo, nb, "var(--bad)")}`;
+  if (lean !== null && blo !== null && nl >= 2 && nb >= 2) {
+    const diff = lean - blo;
+    if (diff >= 15) h += `<div class="good" style="font-size:12.5px;margin-top:4px">Works much better when you stay disciplined: +${f0(diff)} pts in lean decks. Skip more cards after taking it.</div>`;
+    else if (diff <= -15) h += `<div class="info" style="font-size:12.5px;margin-top:4px">Wins more in big decks (${f0(-diff)} pts) - likely needs support cards or a long game to come online.</div>`;
+    else h += `<div class="dim" style="font-size:12.5px;margin-top:4px">Deck size doesn't change much for this card.</div>`;
+  } else if (d.deck_avg_win !== null && d.deck_avg_loss !== null) {
+    h += `<div class="dim" style="font-size:12.5px;margin-top:4px">Avg deck at end of Act 2: ${f1(d.deck_avg_win)} in wins vs ${f1(d.deck_avg_loss)} in losses.</div>`;
+  }
+  h += `</div><div class="dsec"><div class="k">Best &amp; worst co-picked partners</div><div class="s">Cards also in the deck in ${res.min_partner}+ runs, vs this card's ${f0(ov)}% baseline.</div>`;
+  if (!d.partner_pool) h += `<div class="faint" style="font-size:12.5px">No partner appears in ${res.min_partner}+ decks with this card yet.</div>`;
+  for (const [t, items, col] of [["Synergy enablers", d.best, "var(--good)"], ["Anti-synergy / clutter", d.worst, "var(--bad)"]]) {
+    h += `<div style="color:${col};font-weight:600;font-size:12.5px;margin-top:8px">${t}</div>`;
+    h += items.length ? items.map(x => `<div class="partner"><div class="p1"><span>${esc(x.card)}</span><span class="num" style="color:${col}">${pySigned(x.delta, 0)}</span></div>
+      <div class="p2">${f0(x.wr)}% win together (${x.n} runs)${x.wr_without === null ? "" : `  ·  ${f0(x.wr_without)}% without it`}</div></div>`).join("") : `<div class="faint" style="font-size:12.5px">none found</div>`;
+  }
+  const [a1, n1] = d.act1, [a23, n23] = d.act23;
+  h += `</div><div class="dsec"><div class="k">Act drafted</div><div class="s">Win rate by the act you first took it from a card reward - runs that reached Act 3 only, so Act 1 picks aren't punished for early deaths.</div>
+    ${wrRow("Drafted in Act 1", a1, n1, "var(--info)")}${wrRow("Drafted in Act 2/3", a23, n23, "var(--accent)")}`;
+  if (a1 !== null && a23 !== null && n1 >= 2 && n23 >= 2 && Math.abs(a1 - a23) >= 15) {
+    h += a23 > a1 ? `<div class="good" style="font-size:12.5px;margin-top:4px">Better as a later pick (+${f0(a23 - a1)} pts in Act 2/3) - in Act 1 prefer frontloaded damage and take this once the deck can survive.</div>`
+                  : `<div class="good" style="font-size:12.5px;margin-top:4px">Better as an early pick (+${f0(a1 - a23)} pts in Act 1) - it helps most while the deck is weak.</div>`;
+  }
+  h += `</div><div class="faint" style="font-size:11.5px;margin-top:14px">Small samples: runs that last longer collect more cards, so treat these as hints.</div>`;
+  el.innerHTML = h;
+}
+
+/* ===================== Run Autopsy ===================== */
+const ICONS = {
+  monster: `<path d="M3 13L11 5M9.5 3.5L12.5 6.5M2.5 11.5l2 2M11 3l2-1-1 2" />`,
+  elite: `<path d="M3 4l2.5 3h5L13 4v5a5 4 0 01-10 0z"/><circle cx="6.3" cy="9" r=".8" fill="currentColor"/><circle cx="9.7" cy="9" r=".8" fill="currentColor"/>`,
+  boss: `<path d="M2.5 12.5l1-7 3 3L8 4l1.5 4.5 3-3 1 7z"/>`,
+  rest_site: `<path d="M8 2.5c1.8 2.6 3.8 3.8 3.8 6.6a3.8 3.8 0 01-7.6 0c0-1.8 1-2.8 1.8-3.6 0 1.6.8 2.6 1.8 2.6 0-1.8-.9-3.6.2-5.6z"/>`,
+  shop: `<path d="M3.5 6h9l-.8 7.5H4.3zM6 6a2 2 0 014 0"/>`,
+  event: `<circle cx="8" cy="8" r="5.5"/><path d="M6.5 6.5a1.5 1.5 0 113 .2c0 1-1.5 1.2-1.5 2.3M8 11.3v.1"/>`,
+  treasure: `<rect x="2.5" y="6.5" width="11" height="6.5" rx="1"/><path d="M2.5 9h11M3.5 6.5a4.5 3 0 019 0M8 9v1.5"/>`,
+  ancient: `<path d="M8 2.2l1.7 3.7 4 .4-3 2.7.9 4L8 11 4.4 13l.9-4-3-2.7 4-.4z"/>`,
+};
+const ROOM_COLORS = {monster: "#ff9b9b", elite: "#ffb547", boss: "#ff6b6b", rest_site: "#5fd38d", shop: "#ffd479", event: "#6cb6ff", treasure: "#e0b0ff", ancient: "#b28cff"};
+function roomKey(f) {
+  if (f.room_type === "monster" || f.room_type === "elite" || f.room_type === "boss" || f.room_type === "rest_site" || f.room_type === "shop" || f.room_type === "treasure") return f.room_type;
+  if (f.map_type === "ancient") return "ancient";
+  return "event";
+}
+function icon(key) {
+  const c = ROOM_COLORS[key] || "#a9b2c1";
+  return `<span class="ricon" style="background:${hexToRgba(c, .14)};color:${c}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICONS[key] || ICONS.event}</svg></span>`;
+}
+function viewAutopsyShell() {
+  const showChar = S.character === ALL;
+  const rows = D.runs.map(r => `<tr class="click ${r.file === S.selRun ? "sel" : ""}" data-run="${esc(r.file)}">
+      <td class="num">${esc(r.date)}</td>${showChar ? `<td>${esc(r.character)}${r.multiplayer ? " <span class=faint>(co-op)</span>" : ""}</td>` : ""}
+      <td class="c num">${r.ascension}</td><td class="res-${r.result}">${{WIN: "✔ Win", LOSS: "✖ Loss", ABANDONED: "– Quit"}[r.result]}</td>
+      <td class="c num">${r.final_floor}</td><td class="${r.result === "ABANDONED" ? "faint" : ""}">${esc(r.killer)}</td></tr>`).join("");
+  const chip = D.killer ? `<div class="killerchip"><span class="bad">☠</span><b>Runs ended by ${esc(D.killer)}</b><span class="dim">${D.runs.length} run${D.runs.length !== 1 ? "s" : ""}</span><button id="clearKiller">✕ clear</button></div>` : "";
+  return chip + `<div class="ap-wrap"><div class="panel runlist" style="padding:8px 8px 4px"><table class="tbl"><thead><tr><th>Date</th>${showChar ? "<th>Character</th>" : ""}<th class="c">Asc</th><th>Result</th><th class="c">Floor</th><th>Killed by</th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="faint">No runs with these filters.</td></tr>`}</tbody></table></div>
+    <div class="panel" id="autopsy"></div></div>`;
+}
+async function loadAutopsy() {
+  if (!D.runs.length) { $("#autopsy").innerHTML = `<div class="dim">Select a run on the left.</div>`; return; }
+  if (!S.selRun || !D.runs.some(r => r.file === S.selRun)) S.selRun = D.runs[0].file;
+  document.querySelectorAll("tr[data-run]").forEach(tr => tr.classList.toggle("sel", tr.dataset.run === S.selRun));
+  return fillAutopsy($("#autopsy"), S.selRun);
+}
+async function fillAutopsy(el, file) {
+  const r = await api("autopsy", file);
+  if (!r || r.error) { el.innerHTML = `<div class="bad">Could not load this run.</div>`; return; }
+  const resTxt = {WIN: "Victory", LOSS: "Defeat", ABANDONED: "Abandoned"}[r.result];
+  const resCls = {WIN: "good", LOSS: "bad"}[r.result] || "faint";
+  const ic = {bad: ["✖", "bad"], warn: ["▲", "warn"], info: ["•", "info"], good: ["✔", "good"]};
+  let h = `<div class="ap-head"><h2><span style="color:${r.color}">${esc(r.character)}</span>  <span class="${resCls}">${resTxt}</span></h2>
+    <div class="ap-meta">${esc(r.date)} · A${r.ascension} · ${esc(r.mode)} · ${Math.floor(r.run_time / 60)}m ${String(r.run_time % 60).padStart(2, "0")}s · floor ${r.final_floor} · ${r.deck_size} cards · ${r.relic_count} relics</div></div>
+    <div class="dsec" style="border:0;margin-top:12px;padding-top:0"><div class="tphead"><div class="k">Turning points</div>
+      <label class="switch"><input type="checkbox" id="tpOnly" ${S.tpOnly ? "checked" : ""}><span class="track"></span>Turning points only</label></div>
+      ${r.turning.length ? `<div class="tpsum">${r.turning.map(t => `<div class="tpc"><b>Floor ${t.floor}</b>${t.badges.map(b => `<span class="tpb ${b.k}">${esc(b.label)}</span>`).join("")}</div>`).join("")}</div>` : `<div class="faint" style="font-size:13px;margin-top:6px">No standout mistake in this run (no 20+ HP bleed, no 200+ gold unspent, no missed pairing).</div>`}</div>
+    <div class="dsec" style="border:0;margin-top:12px;padding-top:0"><div class="k">Coach's callouts</div>
+    <ul class="callouts">${r.callouts.map(([s, t]) => `<li><span class="ic ${ic[s] ? ic[s][1] : ""}">${ic[s] ? ic[s][0] : "•"}</span><span>${esc(t)}</span></li>`).join("")}</ul></div>
+    <div class="dsec"><div class="k">HP &amp; gold by floor</div>
+    <div class="chartbox"><canvas id="hpChart"></canvas></div>
+    <div class="legend"><span><i style="background:${r.color};border-radius:2px"></i>HP</span><span><i style="background:transparent;border-top:2px dashed #6b7487;height:0"></i>Max HP</span><span><i style="background:#ffd479;border-radius:2px"></i>Gold</span>
+      <span><i style="background:#ffb547;clip-path:polygon(50% 0,100% 100%,0 100%)"></i>Elite</span><span><i style="background:#ff6b6b;transform:rotate(45deg)"></i>Boss</span><span><i style="background:#5fd38d;border-radius:50%"></i>Campfire</span></div></div>
+    <div class="dsec"><div class="k" style="margin-bottom:8px">Floor by floor</div><div class="scroll"><table class="tbl floors"><thead><tr><th class="r">#</th><th>Room / enemy</th><th class="r">Turns</th><th class="r">HP ±</th><th class="r">HP</th><th class="r">Gold</th><th>Cards, potions &amp; events</th></tr></thead><tbody>`;
+  let act = null;
+  for (const f of r.floors) {
+    if (S.tpOnly && !f.tp.length) continue;
+    if (f.act !== act) { act = f.act; h += `<tr class="act"><td colspan="7">Act ${f.act} · ${esc(f.act_name)}</td></tr>`; }
+    const key = roomKey(f);
+    const nameCls = f.room_type === "boss" ? "bad" : f.room_type === "elite" ? "warn" : "";
+    const hpc = [f.damage ? `-${f.damage}` : "", f.healed ? `+${f.healed}` : ""].filter(Boolean).join(" ") || "0";
+    const hpcCls = f.big ? "bad" : f.damage ? "warn" : f.healed ? "good" : "faint";
+    const gd = [f.gold_gained ? `+${f.gold_gained}` : "", f.gold_spent ? `-${f.gold_spent}` : "", f.gold_lost ? `-${f.gold_lost}!` : ""].filter(Boolean).join(" ");
+    let det = "";
+    if (f.card_choices.length && f.map_type === "shop") {
+      const gained = new Set([...f.cards_other, ...f.bought_cards]);
+      det += `<div><span class="faint">Shop: </span>${f.card_choices.map(([n, p]) => (p || gained.has(n)) ? `<span class="cardchip buy">$ ${esc(n)}</span>` : `<span class="cardchip faint">${esc(n)}</span>`).join("")}</div>`;
+    } else if (f.card_choices.length) {
+      det += `<div>${f.card_choices.map(([n, p]) => `<span class="cardchip ${p ? "pick" : "skip"}">${p ? "✔ " : ""}${esc(n)}</span>`).join("")}${f.card_choices.some(c => c[1]) ? "" : `<span class="warn" style="font-size:12px">(skipped)</span>`}</div>`;
+    }
+    const x = [];
+    if (f.cards_other.length) x.push([(f.map_type === "shop" ? "Bought: " : "+ Cards: ") + f.cards_other.join(", "), "info"]);
+    if (f.bought_cards.length) x.push(["Bought: " + f.bought_cards.join(", "), "info"]);
+    if (f.relics.length) x.push(["Relic: " + f.relics.join(", "), "good"]);
+    if (f.potions_picked.length) x.push(["Potion +: " + f.potions_picked.join(", "), "info"]);
+    if (f.potions_used.length) x.push(["Potion used: " + f.potions_used.join(", "), "good"]);
+    if (f.potions_discarded.length) x.push(["Discarded: " + f.potions_discarded.join(", "), "warn"]);
+    if (f.events.length) x.push(["Event: " + f.events.join("; "), "dim"]);
+    if (f.rest.length) x.push(["Campfire: " + f.rest.join(", ") + (f.smith_low ? "  ← upgraded while low" : ""), f.smith_low ? "warn" : "dim"]);
+    if (f.upgraded.length) x.push(["Upgraded: " + f.upgraded.join(", "), "faint"]);
+    if (f.removed.length) x.push(["Removed: " + f.removed.join(", "), "good"]);
+    if (f.max_hp_delta) x.push([`Max HP ${f.max_hp_delta > 0 ? "+" : ""}${f.max_hp_delta}`, f.max_hp_delta > 0 ? "good" : "bad"]);
+    det += x.map(([t, c]) => `<div class="xline ${c}">${esc(t)}</div>`).join("");
+    const tpHtml = f.tp.map(b => `<div style="margin-top:6px"><span class="tpb ${b.k}">${esc(b.label)}</span><div class="faint" style="font-size:11.5px">${esc(b.text)}</div></div>`).join("");
+    h += `<tr class="${f.tp.length ? "tprow" : ""}"><td class="r num faint">${f.floor}</td><td><div class="room">${icon(key)}<span class="${nameCls}">${esc(f.label)}</span></div>${tpHtml}</td>
+      <td class="r num ${f.slow ? "bad" : ""}">${f.is_combat ? f.turns : "-"}</td><td class="r num ${hpcCls}">${hpc}</td>
+      <td class="r num ${f.hp === 0 ? "bad" : ""}">${f.hp === null ? "?" : `${f.hp}/${f.max_hp}`}</td>
+      <td class="r num">${f.gold === null ? "?" : f.gold}${gd ? `<div class="faint" style="font-size:11.5px">${gd}</div>` : ""}</td><td>${det}</td></tr>`;
+  }
+  h += `</tbody></table></div></div>`;
+  if (!r.win && r.floors.length) {
+    h += `<div class="endline">☠  Run ended on floor ${r.final_floor}${r.killer ? ` to ${esc(r.killer)}` : ""} with ${r.final_gold} gold${r.unused_potions.length ? ` and ${esc(r.unused_potions.join(", "))} unused` : ""}.</div>`;
+  }
+  el.innerHTML = h;
+  const tg = $("#tpOnly"); if (tg) tg.addEventListener("change", e => { S.tpOnly = e.target.checked; fillAutopsy(el, file); });
+  drawHpChart(r);
+}
+
+/* ===================== charts ===================== */
+Chart.defaults.color = "#a9b2c1";
+Chart.defaults.borderColor = "rgba(255,255,255,.06)";
+Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+Chart.defaults.font.size = 11.5;
+Chart.defaults.animation.duration = 350;
+const tooltipStyle = {backgroundColor: "#1a202b", borderColor: "rgba(255,255,255,.12)", borderWidth: 1, padding: 10, titleColor: "#e9edf3", bodyColor: "#c9d0db", displayColors: false};
+
+const actLines = {
+  id: "actLines",
+  afterDatasetsDraw(chart, _a, opts) {
+    const xs = opts.boundaries || [];
+    const {ctx, chartArea: {top, bottom}, scales: {x}} = chart;
+    ctx.save(); ctx.strokeStyle = "rgba(255,255,255,.12)"; ctx.setLineDash([3, 4]); ctx.fillStyle = "#828da0"; ctx.font = "11px " + Chart.defaults.font.family;
+    xs.forEach(b => { if (b.index === 0) return; const px = x.getPixelForValue(b.index) - (x.getPixelForValue(1) - x.getPixelForValue(0)) / 2; ctx.beginPath(); ctx.moveTo(px, top); ctx.lineTo(px, bottom); ctx.stroke(); ctx.fillText(b.label, px + 5, top + 11); });
+    ctx.restore();
+  },
+};
+function drawHpChart(r) {
+  const cv = $("#hpChart"); if (!cv) return;
+  const labels = r.floors.map(f => f.floor);
+  const keys = r.floors.map(roomKey);
+  const marker = k => ({elite: "triangle", boss: "rectRot", rest_site: "circle"})[k];
+  const bounds = [];
+  r.floors.forEach((f, i) => { if (i === 0 || f.act !== r.floors[i - 1].act) bounds.push({index: i, label: "Act " + f.act}); });
+  charts.hp = new Chart(cv, {
+    type: "line",
+    data: {labels, datasets: [
+      {label: "HP", data: r.floors.map(f => f.hp), borderColor: r.color, backgroundColor: hexToRgba(r.color, .1), fill: true, tension: .25, borderWidth: 2,
+       pointStyle: keys.map(k => marker(k) || "circle"), pointRadius: keys.map(k => marker(k) ? 6 : 0), pointHoverRadius: 7,
+       pointBackgroundColor: keys.map(k => ({elite: "#ffb547", boss: "#ff6b6b", rest_site: "#5fd38d"})[k] || r.color), pointBorderColor: "#141922", pointBorderWidth: 1.5, yAxisID: "y"},
+      {label: "Max HP", data: r.floors.map(f => f.max_hp), borderColor: "#6b7487", borderDash: [4, 4], borderWidth: 1.5, pointRadius: 0, fill: false, yAxisID: "y"},
+      {label: "Gold", data: r.floors.map(f => f.gold), borderColor: "#ffd479", borderWidth: 1.5, pointRadius: 0, tension: .2, yAxisID: "y2"},
+    ]},
+    options: {maintainAspectRatio: false, interaction: {mode: "index", intersect: false},
+      plugins: {legend: {display: false}, actLines: {boundaries: bounds},
+        tooltip: {...tooltipStyle, callbacks: {title: it => { const f = r.floors[it[0].dataIndex]; return `Floor ${f.floor} · ${f.label}`; }}}},
+      scales: {x: {grid: {display: false}, ticks: {maxTicksLimit: 18}}, y: {beginAtZero: true, title: {display: true, text: "HP"}, grid: {color: "rgba(255,255,255,.05)"}},
+               y2: {position: "right", beginAtZero: true, grid: {display: false}, title: {display: true, text: "Gold"}}}},
+    plugins: [actLines],
+  });
+}
+function drawOverviewCharts() {
+  const O = D.overview; if (O.empty) return;
+  const col = charColor(S.character);
+  const t = O.trend;
+  const tc = $("#trendChart");
+  if (tc) charts.trend = new Chart(tc, {
+    type: "line",
+    data: {labels: t.map(p => p.date), datasets: [
+      {label: "Last 10 runs", data: t.map(p => p.roll), borderColor: col, backgroundColor: hexToRgba(col, .1), fill: true, tension: .3, borderWidth: 2,
+       pointRadius: 3.5, pointHoverRadius: 6, pointBackgroundColor: t.map(p => p.win ? "#5fd38d" : "#ff6b6b"), pointBorderColor: "#141922"},
+      {label: "Overall", data: t.map(p => p.cum), borderColor: "#828da0", borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, fill: false},
+    ]},
+    options: {maintainAspectRatio: false, interaction: {mode: "index", intersect: false},
+      plugins: {legend: {labels: {boxWidth: 12, boxHeight: 2}}, tooltip: {...tooltipStyle, callbacks: {
+        title: it => `${t[it[0].dataIndex].date} · ${t[it[0].dataIndex].win ? "Win" : "Loss"}`,
+        label: c => `${c.dataset.label}: ${f0(c.parsed.y)}%`}}},
+      scales: {y: {min: 0, max: 100, ticks: {callback: v => v + "%"}}, x: {grid: {display: false}, ticks: {maxTicksLimit: 12}}},
+      onClick: (_e, els) => { if (els.length) openRun(t[els[0].index].file); }},
+  });
+  const sc = $("#speedChart");
+  if (sc) charts.speed = new Chart(sc, {
+    type: "bar",
+    data: {labels: O.fights.map(r => r.name), datasets: [
+      {label: "Hallway", data: O.fights.map(r => r.monster ? r.monster.turns : null), backgroundColor: "#6cb6ff", borderRadius: 4},
+      {label: "Elite", data: O.fights.map(r => r.elite ? r.elite.turns : null), backgroundColor: "#ffb547", borderRadius: 4},
+      {label: "Boss", data: O.fights.map(r => r.boss ? r.boss.turns : null), backgroundColor: "#ff6b6b", borderRadius: 4},
+    ]},
+    options: {maintainAspectRatio: false, plugins: {legend: {labels: {boxWidth: 10, boxHeight: 10}}, tooltip: {...tooltipStyle, callbacks: {label: c => `${c.dataset.label}: ${f2(c.parsed.y)} turns`}}},
+      scales: {y: {beginAtZero: true, title: {display: true, text: "avg turns"}}, x: {grid: {display: false}}}},
+  });
+}
+
+/* ===================== events ===================== */
+function openRun(file) { S.killer = null; S.selRun = file; S.tab = "autopsy"; refresh(); }
+function openCard(card) { S.mode = "advanced"; S.biome = "All acts"; S.selCard = card; S.tab = "stats"; S.sub = "table"; refresh(); }
+
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-char],[data-range],[data-tab],[data-sub],[data-biome],[data-run],[data-card],[data-killer],[data-dec],[data-strip],[data-mode],[data-feed],[data-more],[data-sort],#clearKiller");
+  if (!t) return;
+  if (t.dataset.char !== undefined) { S.character = t.dataset.char; S.selRun = null; S.selCard = null; S.killer = null; refresh(); }
+  else if (t.dataset.range) { S.range = t.dataset.range; refresh(); }
+  else if (t.dataset.tab) { S.tab = t.dataset.tab; if (S.tab !== "autopsy") S.killer = null; renderTabs(); renderView(); }
+  else if (t.dataset.sub) { S.sub = t.dataset.sub; renderView(); }
+  else if (t.dataset.dec) { S.dec = t.dataset.dec; renderView(); }
+  else if (t.dataset.feed) { S.feedOpen = S.feedOpen === t.dataset.feed ? null : t.dataset.feed; renderView(); }
+  else if (t.dataset.more) { S.feedN += 12; renderView(); }
+  else if (t.dataset.mode) { S.mode = t.dataset.mode; renderAll(); }
+  else if (t.dataset.strip) { S.stripMode = t.dataset.strip; renderView(); }
+  else if (t.dataset.biome) { S.biome = t.dataset.biome; refresh(); }
+  else if (t.dataset.sort) {
+    const k = t.dataset.sort;
+    S.sort = {key: k, desc: S.sort.key === k ? !S.sort.desc : !["card", "verdict", "tempo"].includes(k)};
+    const th = document.querySelectorAll("th[data-sort]");
+    th.forEach(x => { const a = x.querySelector(".arr"); if (a) a.remove(); if (x.dataset.sort === k) x.insertAdjacentHTML("beforeend", `<span class="arr">${S.sort.desc ? "↓" : "↑"}</span>`); });
+    fillTable();
+  }
+  else if (t.dataset.killer) { S.killer = t.dataset.killer; S.selRun = null; S.tab = "autopsy"; refresh(); }
+  else if (t.id === "clearKiller") { S.killer = null; S.selRun = null; refresh(); }
+  else if (t.dataset.run) {
+    if (S.tab === "autopsy" && t.tagName === "TR") { S.selRun = t.dataset.run; loadAutopsy(); }
+    else openRun(t.dataset.run);
+  }
+  else if (t.dataset.card) {
+    if (S.tab === "stats" && S.sub === "table" && t.tagName === "TR") { S.selCard = t.dataset.card; loadCardDetail(); }
+    else openCard(t.dataset.card);
+  }
+});
+document.addEventListener("toggle", e => {
+  const d = e.target; if (!(d instanceof HTMLDetailsElement) || !d.dataset.hid) return;
+  if (d.open) S.expanded.add(d.dataset.hid); else S.expanded.delete(d.dataset.hid);
+}, true);
+document.addEventListener("input", e => {
+  if (e.target.id === "minPicks") {
+    const v = +e.target.value; $("#minVal").textContent = v;
+    if (S.biome === "All acts") S.minAll = v; else S.minBiome = v;
+    clearTimeout(window._mp); window._mp = setTimeout(refresh, 150);
+  } else if (e.target.id === "search") { S.search = e.target.value; fillTable(); }
+});
+$("#asc").addEventListener("change", e => { S.asc = e.target.value; refresh(); });
+$("#optQuits").addEventListener("change", e => { S.quits = e.target.checked; refresh(); });
+$("#optCoop").addEventListener("change", e => { S.coop = e.target.checked; refresh(); });
+$("#optAuto").addEventListener("change", e => { S.auto = e.target.checked; });
+$("#reloadBtn").addEventListener("click", async () => { await api("reload"); refresh(); });
+
+// folder dialog
+function openModal() { $("#mPath").value = (D && D.status.history_dir) || (INIT && INIT.history_dir) || ""; $("#mErr").textContent = ""; $("#modal").classList.add("show"); $("#mPath").focus(); }
+$("#folderBtn").addEventListener("click", openModal);
+$("#mCancel").addEventListener("click", () => $("#modal").classList.remove("show"));
+$("#modal").addEventListener("keydown", e => { if (e.key === "Escape") $("#modal").classList.remove("show"); if (e.key === "Enter") $("#mSave").click(); });
+$("#mBrowse").addEventListener("click", async () => { const p = await api("choose_folder"); if (p) $("#mPath").value = p; });
+$("#mSave").addEventListener("click", async () => {
+  const res = await api("set_folder", $("#mPath").value);
+  if (!res.ok) { $("#mErr").textContent = res.error; return; }
+  $("#modal").classList.remove("show"); refresh();
+});
+
+// auto-refresh: same as v1 - check every 3 s, select the newest run in Run Autopsy
+async function poll() {
+  if (S.auto) {
+    try {
+      const res = await api("poll");
+      if (res && res.changed) {
+        if (res.new_run) { S.selRun = res.new_run.file; newRunNote = `New run: ${res.new_run.character} - ${res.new_run.result}`; }
+        await refresh();
+      }
+    } catch (err) { /* ignore and try again */ }
+  }
+  setTimeout(poll, (INIT && INIT.poll_ms) || 3000);
+}
+
+// optional deep link for testing: #char=Silent&tab=stats&sub=overview
+function applyHash() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get("char")) S.character = h.get("char");
+  if (h.get("tab")) S.tab = h.get("tab");
+  if (h.get("sub")) S.sub = h.get("sub");
+  if (h.get("dec")) S.dec = h.get("dec");
+  if (h.get("biome")) S.biome = h.get("biome");
+  if (h.get("card")) S.selCard = h.get("card");
+  if (h.get("run")) S.selRun = h.get("run");
+  if (h.get("feed")) S.feedOpen = h.get("feed");
+  if (h.get("mode")) S.mode = h.get("mode");
+  if (h.get("tp")) S.tpOnly = h.get("tp") === "1";
+  if (h.get("strip")) S.stripMode = h.get("strip");
+  if (h.get("killer")) S.killer = h.get("killer");
+  if (h.get("asc")) S.asc = h.get("asc");
+  if (h.get("range")) S.range = h.get("range");
+  if (h.get("still")) { document.body.classList.add("still"); Chart.defaults.animation = false; }
+  if (h.get("quits")) { S.quits = h.get("quits") === "1"; $("#optQuits").checked = S.quits; }
+}
+
+(async function start() {
+  await apiReady();
+  INIT = await api("init");
+  $("#mBrowse").style.display = INIT.can_browse ? "" : "none";
+  applyHash();
+  await refresh();
+  setTimeout(poll, INIT.poll_ms || 3000);
+})();
+</script>
+</body>
+</html>
