@@ -27,3 +27,7 @@
   .hab:hover { border-color: rgba(255,255,255,.18); }
 
 @keyframes pop{from{opacity:0;transform:scale(.88) translateY(8px)}to{opacity:1;transform:none}}.pop{animation:pop .16s ease-out}.artthumb{transition:transform .15s ease;transform-origin:left center}a:hover>.artthumb,.artthumb:hover{transform:scale(1.25)}
+/* focus tab: hover card on a run in a reminder's history bar */
+.runtip { display: none; }
+.runseg:hover .runtip { display: block; }
+.runseg:hover > i { outline: 2px solid #fff; outline-offset: 1px; }

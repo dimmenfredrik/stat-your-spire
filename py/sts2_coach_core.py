@@ -758,29 +758,34 @@ def gameplan_fixes(runs, include_abandoned, n_last=5):
              detail=lambda bad, rs: (f"Died with {GOLD_LEAK_THRESHOLD}+ gold in {len(bad)}/{len(rs)} losses "
                                      f"(avg {avg([r['final_gold'] for r in bad]):.0f})."),
              target=f"Arrive at every boss and elite with ≤{GOLD_LEAK_THRESHOLD} gold: removal first, then one key card/relic.",
+             why=lambda r, v: "Won the run" if r["win"] else (f"Died with {r['final_gold']} gold (goal: {GOLD_LEAK_THRESHOLD} or less)" if not v else f"Died with only {r['final_gold']} gold"),
              ok_word="spent gold well", scope="losses"),
         dict(id="potions", title="Drink your potions",
              check=lambda r: True if r["win"] else not r["unused_potions"],
              detail=lambda bad, rs: (f"Died holding potions in {len(bad)}/{len(rs)} losses "
                                      f"({', '.join(sorted({p for r in bad for p in r['unused_potions']})[:3])})."),
              target="Use a potion the moment a fight will cost 40%+ HP - never die with a full belt.",
+             why=lambda r, v: "Won the run" if r["win"] else (f"Died holding {len(r['unused_potions'])} potion{'s' if len(r['unused_potions']) != 1 else ''}" if not v else "Used every potion"),
              ok_word="used their potions", scope="losses"),
         dict(id="slow_a1", title="Kill Act 1 hallways faster",
              check=lambda r: None if a1_avg(r) is None else a1_avg(r) <= SLOW_A1_GAMEPLAN,
              detail=lambda bad, rs: (f"{len(bad)}/{len(rs)} runs averaged >{SLOW_A1_GAMEPLAN} turns per Act 1 "
                                      f"hallway fight (worst {max(a1_avg(r) for r in bad):.1f})."),
              target=f"Take frontloaded damage with your first 3 card rewards; aim for ≤{SLOW_A1_GAMEPLAN} turns per hallway.",
+             why=lambda r, v: (f"Act 1 hallway fights took {a1_avg(r):.1f} turns on average (goal: {SLOW_A1_GAMEPLAN} or less)" if a1_avg(r) is not None else ""),
              ok_word="had fast Act 1 fights", scope="runs"),
         dict(id="a2_skip", title="Skip more in Act 2",
              check=lambda r: (None if _act2_rewards(r)[0] < 3 else _act2_rewards(r)[1] >= 1),
              detail=lambda bad, rs: (f"Took a card from every Act 2 reward in {len(bad)}/{len(rs)} runs "
                                      f"that saw 3+ Act 2 rewards."),
              target="In Act 2, skip at least 1-2 rewards that don't add AoE, scaling or block.",
+             why=lambda r, v: ("Skipped at least one Act 2 card reward" if v else "Took a card from every Act 2 reward"),
              ok_word="skipped in Act 2", scope="runs"),
         dict(id="lowhp", title="Don't enter fights low",
              check=lambda r: (True if r["win"] else (None if _fatal_entry_hp(r) is None else _fatal_entry_hp(r) >= 0.5)),
              detail=lambda bad, rs: (f"Entered the fight that killed you below 50% HP in {len(bad)}/{len(rs)} losses."),
              target="Below 50% HP: rest at campfires and path around elites until you're healthy.",
+             why=lambda r, v: "Won the run" if r["win"] else ((f"Entered the fatal fight at {100 * _fatal_entry_hp(r):.0f}% HP" if _fatal_entry_hp(r) is not None else "") + (" (goal: 50% or more)" if not v else "")),
              ok_word="stayed healthy", scope="losses"),
     ]
     out = []
@@ -794,8 +799,19 @@ def gameplan_fixes(runs, include_abandoned, n_last=5):
         if not bad or rate < 25:
             continue
         last5 = [v for _, v in res if v is not None][:n_last]
+        runs_n = []   # the same runs as last5, newest first, with a short reason (shown when you hover a run in the focus tab)
+        for r, v in res:
+            if v is None:
+                continue
+            b = run_brief(r)
+            b["ok"] = bool(v)
+            try:
+                b["why"] = c["why"](r, v) if c.get("why") else ""
+            except Exception:
+                b["why"] = ""
+            runs_n.append(b)
         out.append(dict(id=c["id"], title=c["title"], rate=rate, detail=c["detail"](bad, [r for r, _ in rel]),
-                        target=c["target"], last5=last5, ok_word=c["ok_word"]))
+                        target=c["target"], last5=last5, ok_word=c["ok_word"], last_runs=runs_n[:n_last]))
     out.sort(key=lambda x: -x["rate"])
     return out[:2], len(decided)
 
@@ -1727,9 +1743,10 @@ class CoachAPI:
         filtered = asc != "All" or rng != "All runs"
         scope = runs if filtered else runs[:GAMEPLAN_RUNS]
         fixes, n_dec = gameplan_fixes(scope, inc)
-        l10 = {x["id"]: x["last5"] for x in gameplan_fixes(scope, inc, 10)[0]}     # same checks, 10-run trend
+        l10x = {x["id"]: x for x in gameplan_fixes(scope, inc, 10)[0]}     # same checks, 10-run trend
         for fx in fixes:
-            fx["last10"] = l10.get(fx["id"], fx["last5"])
+            fx["last10"] = (l10x.get(fx["id"]) or fx)["last5"]
+            fx["last10_runs"] = (l10x.get(fx["id"]) or fx)["last_runs"]
         who = character if character != ALL else "all"
         scope_txt = (f"current filter · {n_dec} finished runs" if filtered
                      else f"last {min(GAMEPLAN_RUNS, len(runs))} {who} runs · {n_dec} finished")

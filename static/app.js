@@ -54,17 +54,27 @@ const haloIcon = (svg, ring, c) => `<span class="relative grid shrink-0 place-it
 const FOE_COL = {boss: "#ff6b6b", elite: "#ffb547", monster: "#a9b2c1"};
 /* the foe that ended a run (killer on a loss, final boss on a win): boss icon, else the rendered enemy picture, else a drawn icon */
 const enemyUrl = id => { const f = id ? ART.get("enemy_" + id) : ""; return f ? `${artUrl(f)}` : ""; };
-function foeBlock(r) {
-  const win = r.result === "WIN";
-  if (r.result === "ABANDONED" || (!win && !r.foe && !r.killer)) return "";
+function foeInfo(r) {
+  const win = r.result === "WIN" || r.win === true;
+  if (r.result === "ABANDONED" || (!win && !r.foe && !r.killer)) return null;
   const kind = r.foe_kind || (/\(boss\)/i.test(r.killer || "") ? "boss" : /\(elite\)/i.test(r.killer || "") ? "elite" : r.foe ? "monster" : "");
   const raw = win ? (r.foe_name || r.foe || "") : (r.killer || "");
   const name = String(raw).replace(/\s*\((elite|weak|boss)\)\s*$/i, "") || "–";
   const col = win ? "#4ade80" : (FOE_COL[kind] || "#a9b2c1");
   const url = (kind === "boss" && bossArt(name)) || enemyUrl(r.foe) || bossArt(name);
-  const tag = win ? `<div class="text-[10px] font-bold tracking-wider text-good">VICTORY</div>` : kind ? `<div class="text-[10px] font-bold tracking-wider" style="color:${col}">${kind === "monster" ? "FIGHT" : kind.toUpperCase()}</div>` : "";
-  const ring = !ART.size ? "" : url ? halo(url, 72, 58, col, url === enemyUrl(r.foe)) : haloIcon(win ? TROPHY : `<span style="color:${col}">${ico(kind === "elite" ? "elite" : kind === "boss" ? "boss" : "monster", 30)}</span>`, 72, col);
-  return `<div class="flex shrink-0 items-center gap-3"><div class="text-right"><div class="text-[10px] font-semibold tracking-wider text-faint">${win ? "BEAT THE FINAL BOSS" : "KILLED BY"}</div><div class="text-base font-bold leading-snug">${esc(name)}</div>${tag}</div>${ring}</div>`;
+  return {win, kind, name, col, url, wide: !!url && url === enemyUrl(r.foe)};
+}
+/* round picture of a foe (or a drawn icon when there is no picture) */
+function foeRing(f, ring, img) {
+  if (!ART.size) return "";
+  return f.url ? halo(f.url, ring, img, f.col, f.wide)
+    : haloIcon(f.win ? TROPHY : `<span style="color:${f.col}">${ico(f.kind === "elite" ? "elite" : f.kind === "boss" ? "boss" : "monster", Math.round(ring * .42))}</span>`, ring, f.col);
+}
+function foeBlock(r) {
+  const f = foeInfo(r);
+  if (!f) return "";
+  const tag = f.win ? `<div class="text-[10px] font-bold tracking-wider text-good">VICTORY</div>` : f.kind ? `<div class="text-[10px] font-bold tracking-wider" style="color:${f.col}">${f.kind === "monster" ? "FIGHT" : f.kind.toUpperCase()}</div>` : "";
+  return `<div class="flex shrink-0 items-center gap-3"><div class="text-right"><div class="text-[10px] font-semibold tracking-wider text-faint">${f.win ? "BEAT THE FINAL BOSS" : "KILLED BY"}</div><div class="text-base font-bold leading-snug">${esc(f.name)}</div>${tag}</div>${foeRing(f, 72, 58)}</div>`;
 }
 const panel = (inner, cls = "") => `<section class="rounded-xl border border-line bg-card p-5 ${cls}">${inner}</section>`;
 const head = (title, tag = "") => `<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-bold tracking-wide">${esc(title)}</h3><span class="text-[10.5px] font-semibold tracking-wider text-faint">${esc(tag)}</span></div>`;
