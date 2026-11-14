@@ -2,9 +2,11 @@
 """
 sts2_coach.py - Slay the Spire 2 second-monitor coaching tool.
 
-Reads the plain-JSON .run files from your STS2 history folder and shows:
-  1. Coaching Insights & Leaks (across all runs)
-  2. Run Autopsy (floor-by-floor review with automatic callouts)
+Reads the plain-JSON .run files from your STS2 history folder. Pick a character
+in the sidebar (or "All characters") and switch between:
+  * Habits & Fixes - the habits that show up in your losses, ranked, with what to do
+  * Stats          - records, pick rates, fight speed, leaks, nemeses, card insights
+  * Run Autopsy    - floor-by-floor review of any run with automatic callouts
 
 Standard library only (tkinter). Run with:  python sts2_coach.py
 Optional:  python sts2_coach.py "D:\\path\\to\\history"
@@ -36,17 +38,30 @@ BIG_HIT_FRACTION = 0.30        # a fight costing >=30% of max HP is a "big hit"
 ACT_ORDER = ["ACT.OVERGROWTH", "ACT.UNDERDOCKS", "ACT.HIVE", "ACT.GLORY"]
 COMBAT_TYPES = ("monster", "elite", "boss")
 
-# Colours (dark theme for a second monitor)
-BG = "#16181d"
-PANEL = "#1f232b"
-FG = "#d7dae0"
-DIM = "#7f8796"
-ACCENT = "#e5c07b"
-GOOD = "#98c379"
-BAD = "#e06c75"
-WARN = "#d19a66"
-INFO = "#61afef"
-SEL = "#2c3340"
+# Colours - modern dark theme
+BG = "#0f1115"          # window
+SIDEBAR = "#14171d"
+CARD = "#1b1f27"        # cards / panels
+CARD_HI = "#232834"     # hover / selected
+BORDER = "#2a303c"
+FG = "#e6e8ee"
+DIM = "#8a93a6"
+FAINT = "#5c6475"
+ACCENT = "#f0b35a"
+GOOD = "#5fd38d"
+BAD = "#ff6b6b"
+WARN = "#ffb547"
+INFO = "#6cb6ff"
+PANEL = CARD
+SEL = CARD_HI
+CHAR_COLORS = {
+    "Ironclad": "#ff6b6b", "Silent": "#5fd38d", "Defect": "#6cb6ff",
+    "Regent": "#f0b35a", "Necrobinder": "#c792ea", "Fool": "#ff8fc7",
+}
+FALLBACK_COLORS = ["#7fdbca", "#f78c6c", "#82aaff", "#c3e88d", "#ffcb6b"]
+UI_FONT = "Segoe UI"
+UI_FONT_SEMI = "Segoe UI Semibold"
+MONO_FONT = "Consolas"
 
 
 # --------------------------------------------------------------------------
@@ -261,6 +276,9 @@ def parse_run(path, steam_id=None):
         "final_gold": last.get("gold") or 0,
         "unused_potions": unused_potions,
         "deck_size": len(player.get("deck") or []),
+        "deck_added": [pretty(c.get("id")) for c in player.get("deck") or []
+                       if (c.get("floor_added_to_deck") or 0) > 1],
+        "removals": sum(len(f["removed"]) for f in floors),
         "relic_count": len(player.get("relics") or []),
     }
 
@@ -409,167 +427,569 @@ def autopsy_callouts(r):
     return calls
 
 
+
+# --------------------------------------------------------------------------
+# Habit detection - what keeps ruining your runs, and what to do about it
+# --------------------------------------------------------------------------
+def _hall_turns(r, act):
+    t = [f["turns"] for f in r["floors"] if f["act"] == act and f["room_type"] == "monster"]
+    return avg(t) if len(t) >= 3 else None
+
+
+def _fatal_entry_hp(r):
+    fl = r["floors"]
+    if len(fl) < 2 or not fl[-1]["is_combat"]:
+        return None
+    prev = fl[-2]
+    if prev.get("hp") is None or not prev.get("max_hp"):
+        return None
+    return prev["hp"] / prev["max_hp"]
+
+
+def _low_hp_smiths(r):
+    return sum(1 for f in r["floors"] if "Smith" in f["rest"] and f["hp"] is not None
+               and f["max_hp"] and f["hp"] / f["max_hp"] < 0.5)
+
+
+def _act1_skips(r):
+    return sum(1 for f in r["floors"] if f["act"] == 1 and f["card_choices"]
+               and f["map_type"] != "shop" and not any(p for _, p in f["card_choices"]))
+
+
+def _hallway_big_hits(r):
+    return sum(1 for f in r["floors"][:-1] if f["room_type"] == "monster" and f["max_hp"]
+               and f["damage"] >= 0.25 * f["max_hp"])
+
+
+def _hoarded_without_shop(r):
+    worst = 0
+    for act in {f["act"] for f in r["floors"]}:
+        act_fl = [f for f in r["floors"] if f["act"] == act]
+        if not any(f["map_type"] == "shop" for f in act_fl):
+            worst = max(worst, max((f["gold"] or 0) for f in act_fl))
+    return worst
+
+
+# Each habit:
+#   kind "death": only meaningful for runs you lost (state at death)
+#   kind "run":   compared between wins and losses
+#   metric(run, ctx) -> number or None (None = not applicable to this run)
+#   bad(value, ctx)  -> True when the habit is present
+HABITS = [
+    dict(id="potions", kind="death", title="Dying with potions on the belt",
+         metric=lambda r, c: len(r["unused_potions"]),
+         bad=lambda v, c: v >= 1, unit="potions held at death", fmt="{:.1f}",
+         why="Every potion you die with is HP, damage or block you paid for and never used.",
+         fix=["When a fight is going badly (you'll lose 50%+ HP), drink immediately - don't wait for 'the right moment'.",
+              "Treat elites and bosses as potion fights by default.",
+              "Keep one slot free so you never skip a potion reward because the belt is full."]),
+    dict(id="gold", kind="death", title="Dying with unspent gold",
+         metric=lambda r, c: r["final_gold"],
+         bad=lambda v, c: v > GOLD_LEAK_THRESHOLD, unit="gold at death", fmt="{:.0f}",
+         why="Gold is worth nothing on the death screen. 150+ gold is a card removal plus a key card or relic.",
+         fix=["Path through a shop at least once per act, especially when you're above ~200 gold.",
+              "Buy card removal first, then the single strongest card/relic for your deck's weakness.",
+              "Before an act boss, ask: 'what could I buy that wins this fight?'"]),
+    dict(id="lowhp_fatal", kind="death", title="Walking into the fatal fight at low HP",
+         metric=lambda r, c: (None if _fatal_entry_hp(r) is None else 100 * _fatal_entry_hp(r)),
+         bad=lambda v, c: v < 50, unit="HP entering the fight that killed you", fmt="{:.0f}%",
+         why="Most deaths aren't the fight's fault - you arrived without the HP buffer to survive a bad draw.",
+         fix=["Below ~50% HP, path toward rest sites and events instead of hallway fights and elites.",
+              "Rest (don't upgrade) at the campfire before an elite or the boss when you're under half HP.",
+              "Use potions in the fight *before* the dangerous one if it keeps your HP up."]),
+    dict(id="elite_death", kind="death", title="Losing runs to elites",
+         metric=lambda r, c: 1 if r["floors"] and r["floors"][-1]["room_type"] == "elite" else 0,
+         bad=lambda v, c: v == 1, unit="share of deaths to elites", fmt="{:.0%}",
+         why="Elites are optional. Dying to one usually means it was taken too greedily.",
+         fix=["Only take an elite when you're above ~60-70% HP and your deck can deal big damage quickly.",
+              "In Act 1, take at most 1-2 elites unless your deck is clearly ahead.",
+              "Learn the elite's pattern (check the Nemesis list in Stats) and save a potion for it."]),
+    dict(id="slow_a1", kind="run", title="Slow Act 1 fights (not enough early damage)",
+         metric=lambda r, c: _hall_turns(r, 1),
+         bad=lambda v, c: v > SLOW_TURNS_BY_ACT[1], unit="avg turns per Act 1 hallway fight", fmt="{:.2f}",
+         why="Every extra turn in Act 1 is another enemy attack. Slow fights add up to the HP you're missing later.",
+         fix=["Prioritise frontloaded damage and AoE in your first 3-4 card rewards.",
+              "Upgrade your best damage card at the first campfire if you're healthy.",
+              "Don't take slow scaling/powers in Act 1 until you can kill hallway fights in ~3 turns."]),
+    dict(id="slow_a2", kind="run", title="Deck not scaling into Act 2",
+         metric=lambda r, c: _hall_turns(r, 2),
+         bad=lambda v, c: v > SLOW_TURNS_BY_ACT[2], unit="avg turns per Act 2 hallway fight", fmt="{:.2f}",
+         why="Act 2 enemies outscale a deck that still relies on starter Strikes.",
+         fix=["By the end of Act 1, look for AoE plus one scaling engine (strength, powers, or your character's scaling).",
+              "Remove Strikes at shops so your good damage cards come up more often.",
+              "Spend upgrades on cards that multiply damage, not on Defends."]),
+    dict(id="skip_a1", kind="run", title="Skipping too many Act 1 card rewards",
+         metric=lambda r, c: _act1_skips(r),
+         bad=lambda v, c: v >= 3, unit="Act 1 card rewards skipped", fmt="{:.1f}",
+         why="Early on your deck is mostly starter cards. Skipping keeps it weak exactly when it needs power.",
+         fix=["In Act 1, take the best damage card offered unless it's actively bad.",
+              "Start skipping once your deck has a clear plan (usually mid-Act 2).",
+              "If unsure between two cards, take the one that kills a hallway fight faster."]),
+    dict(id="big_hits", kind="run", title="Bleeding HP in hallway fights",
+         metric=lambda r, c: _hallway_big_hits(r),
+         bad=lambda v, c: v >= 2, unit="hallway fights costing 25%+ max HP", fmt="{:.1f}",
+         why="Normal fights should cost chip damage. Big hits there leave you too low for elites and bosses.",
+         fix=["Pick up at least 2-3 good block/Weak cards by mid-Act 1.",
+              "Against multi-hit or multiple enemies, block first and kill the biggest threat.",
+              "Use a potion in a hallway fight that's spiralling - that's cheaper than the HP."]),
+    dict(id="smith_low", kind="run", title="Upgrading at the campfire while low on HP",
+         metric=lambda r, c: _low_hp_smiths(r),
+         bad=lambda v, c: v >= 1, unit="upgrades taken below 50% HP", fmt="{:.1f}",
+         why="An upgrade doesn't matter if the next elite or boss kills you.",
+         fix=["Rule of thumb: below 50% HP with an elite/boss ahead, rest.",
+              "Upgrade only when healthy or when the next floors are safe (shop, event, treasure)."]),
+    dict(id="no_removal", kind="run", title="Never removing cards",
+         metric=lambda r, c: (r["removals"] if r["final_floor"] >= 20 else None),
+         bad=lambda v, c: v == 0, unit="cards removed per run", fmt="{:.1f}",
+         why="Starter Strikes and Defends dilute your draws. Removal is often the best thing a shop sells.",
+         fix=["Buy a removal at every shop you can afford it - Strikes first.",
+              "Take removal options from events when they're offered."]),
+    dict(id="bloat", kind="run", title="Bloated deck",
+         metric=lambda r, c: r["deck_size"],
+         bad=lambda v, c: v > c["bloat"], unit="cards in final deck", fmt="{:.1f}",
+         why="Every card you add makes it less likely you draw your best ones.",
+         fix=["After Act 1, only take cards that fix a real weakness (AoE, block, scaling, draw).",
+              "Skipping a card reward is fine once the deck has a plan."]),
+    dict(id="hoard_noshop", kind="run", title="Hoarding gold and not visiting shops",
+         metric=lambda r, c: _hoarded_without_shop(r),
+         bad=lambda v, c: v >= 300, unit="peak gold in an act with no shop", fmt="{:.0f}",
+         why="Gold is only strong once it's spent. 300+ gold unused for a whole act is a lot of lost power.",
+         fix=["When you hit ~250 gold, plan your path through a shop.",
+              "Don't save gold for 'later' unless you know a shop is coming."]),
+]
+
+
+def habit_report(runs, include_abandoned):
+    """Analyse a set of runs; return ranked habits plus 'under control' ones."""
+    wins = [r for r in runs if r["win"]]
+    losses = [r for r in runs if is_loss(r, include_abandoned)]
+    win_decks = [r["deck_size"] for r in wins]
+    ctx = {"bloat": max(28, round(avg(win_decks) + 6)) if win_decks else 30}
+    out, fine = [], []
+    for h in HABITS:
+        def vals(rs):
+            res = []
+            for r in rs:
+                v = h["metric"](r, ctx)
+                if v is not None:
+                    res.append((r, v, bool(h["bad"](v, ctx))))
+            return res
+        lv = vals(losses)
+        if len(lv) < 2:
+            continue
+        loss_hits = sum(1 for _, _, b in lv if b)
+        loss_rate = pct(loss_hits, len(lv))
+        item = dict(h=h, loss_n=len(lv), loss_hits=loss_hits, loss_rate=loss_rate,
+                    loss_avg=avg([v for _, v, _ in lv]), examples=[r for r, _, b in lv if b])
+        if h["kind"] == "run":
+            wv = vals(wins)
+            win_hits = sum(1 for _, _, b in wv if b)
+            item.update(win_n=len(wv), win_hits=win_hits,
+                        win_rate=pct(win_hits, len(wv)) if wv else None,
+                        win_avg=avg([v for _, v, _ in wv]) if wv else None)
+            with_h = loss_hits + win_hits
+            without_h = (len(lv) - loss_hits) + (len(wv) - win_hits)
+            item["wr_with"] = pct(win_hits, with_h) if with_h else None
+            item["wr_without"] = pct(len(wv) - win_hits, without_h) if without_h else None
+            if len(wv) >= 2:
+                danger = loss_rate - item["win_rate"] * 0.8
+            else:
+                danger = loss_rate * 0.6
+        else:
+            danger = loss_rate * 0.8
+        item["danger"] = danger
+        item["sev"] = "high" if danger >= 40 else "med" if danger >= 20 else "low"
+        if loss_hits >= 2 and loss_rate >= 20 and danger >= 10:
+            out.append(item)
+        elif loss_rate < 15:
+            fine.append(item)
+    out.sort(key=lambda i: -i["danger"])
+    return out, fine, wins, losses
+
+
+def card_insights(runs, include_abandoned):
+    """Win rate of non-starter cards that ended up in your final deck."""
+    stat = defaultdict(lambda: [0, 0])     # card -> [wins, decided]
+    for r in runs:
+        if not (r["win"] or is_loss(r, include_abandoned)):
+            continue
+        for card in set(r["deck_added"]):
+            stat[card][1] += 1
+            stat[card][0] += r["win"]
+    rows = [(c, w, n) for c, (w, n) in stat.items()]
+    best = sorted([x for x in rows if x[2] >= 2 and x[1] >= 1], key=lambda x: (-x[1] / x[2], -x[2]))[:8]
+    worst = sorted([x for x in rows if x[2] >= 3 and x[1] == 0], key=lambda x: -x[2])[:8]
+    return best, worst
+
+
+def char_color(name, _cache={}):
+    if name in CHAR_COLORS:
+        return CHAR_COLORS[name]
+    if name not in _cache:
+        _cache[name] = FALLBACK_COLORS[len(_cache) % len(FALLBACK_COLORS)]
+    return _cache[name]
+
+
+# --------------------------------------------------------------------------
+# Small modern widgets
+# --------------------------------------------------------------------------
+class ScrollFrame(tk.Frame):
+    """A vertically scrolling frame (mouse wheel works while hovering)."""
+
+    def __init__(self, parent, bg=BG):
+        super().__init__(parent, bg=bg)
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, borderwidth=0)
+        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview,
+                                 style="Modern.Vertical.TScrollbar")
+        self.inner = tk.Frame(self.canvas, bg=bg)
+        self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.vsb.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.vsb.pack(side="right", fill="y")
+        self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self._win, width=e.width))
+        self.bind_all("<MouseWheel>", self._wheel, add="+")
+        self.bind_all("<Button-4>", self._wheel, add="+")
+        self.bind_all("<Button-5>", self._wheel, add="+")
+
+    def _wheel(self, e):
+        w = self.winfo_containing(e.x_root, e.y_root)
+        while w is not None and w is not self:
+            w = w.master
+        if w is None or not self.winfo_ismapped():
+            return
+        if getattr(e, "num", None) == 4:
+            step = -3
+        elif getattr(e, "num", None) == 5:
+            step = 3
+        else:
+            step = int(-e.delta / 40) or (-1 if e.delta > 0 else 1)
+        self.canvas.yview_scroll(step, "units")
+
+    def clear(self):
+        for c in self.inner.winfo_children():
+            c.destroy()
+        self.canvas.yview_moveto(0)
+
+
+def wrap_label(parent, text, size=10, fg=FG, bg=CARD, weight="normal", pad=0, font=None, **kw):
+    lbl = tk.Label(parent, text=text, fg=fg, bg=bg, justify="left", anchor="w",
+                   font=font or (UI_FONT_SEMI if weight == "bold" else UI_FONT, size), **kw)
+    lbl.bind("<Configure>", lambda e: lbl.configure(wraplength=max(100, e.width - pad)))
+    return lbl
+
+
+def text_widget(parent):
+    frame = tk.Frame(parent, bg=CARD)
+    txt = tk.Text(frame, bg=CARD, fg=FG, insertbackground=FG, relief="flat", wrap="word",
+                  font=(MONO_FONT, 10), padx=18, pady=14, borderwidth=0,
+                  highlightthickness=0, cursor="arrow", spacing1=1, spacing3=1)
+    sb = ttk.Scrollbar(frame, orient="vertical", command=txt.yview, style="Modern.Vertical.TScrollbar")
+    txt.configure(yscrollcommand=sb.set)
+    txt.pack(side="left", fill="both", expand=True)
+    sb.pack(side="right", fill="y")
+    tags = {
+        "h1": dict(font=(UI_FONT_SEMI, 16), foreground=FG, spacing1=2, spacing3=6),
+        "h2": dict(font=(UI_FONT_SEMI, 12), foreground=ACCENT, spacing1=14, spacing3=6),
+        "dim": dict(foreground=DIM), "faint": dict(foreground=FAINT),
+        "good": dict(foreground=GOOD), "bad": dict(foreground=BAD),
+        "warn": dict(foreground=WARN), "info": dict(foreground=INFO),
+        "bold": dict(font=(MONO_FONT, 10, "bold")),
+        "picked": dict(foreground=GOOD, font=(MONO_FONT, 10, "bold")),
+        "skipped": dict(foreground=FAINT, overstrike=True),
+        "floorhead": dict(font=(MONO_FONT, 10, "bold"), foreground=DIM),
+        "combat": dict(foreground="#ffb3b3"),
+        "elite": dict(foreground=WARN, font=(MONO_FONT, 10, "bold")),
+        "boss": dict(foreground=BAD, font=(MONO_FONT, 10, "bold")),
+        "callout": dict(lmargin1=4, lmargin2=28, spacing1=3, spacing3=3, font=(UI_FONT, 10)),
+        "actbar": dict(background=CARD_HI, foreground=ACCENT, font=(UI_FONT_SEMI, 11),
+                       spacing1=12, spacing3=6, lmargin1=4),
+        "ui": dict(font=(UI_FONT, 10)),
+        "detail": dict(lmargin2=110),
+    }
+    for tag, opts in tags.items():
+        txt.tag_configure(tag, **opts)
+    txt.configure(state="disabled")
+    return frame, txt
+
+
 # --------------------------------------------------------------------------
 # GUI
 # --------------------------------------------------------------------------
+ALL = "All characters"
+VIEWS = ("Habits & Fixes", "Stats", "Run Autopsy")
+
+
 class CoachApp(tk.Tk):
     def __init__(self, history_dir):
         super().__init__()
         self.title("STS2 Coach")
-        self.geometry("1400x900")
+        self.geometry("1440x920")
+        self.minsize(1100, 700)
         self.configure(bg=BG)
         self.history_dir = tk.StringVar(value=history_dir)
         self.auto_refresh = tk.BooleanVar(value=True)
         self.include_abandoned = tk.BooleanVar(value=False)
         self.include_multi = tk.BooleanVar(value=True)
-        self.char_filter = tk.StringVar(value="All")
-        self.mode_filter = tk.StringVar(value="All")
         self.status = tk.StringVar(value="")
-        self.cache = {}          # path -> (mtime, run dict or None)
-        self.runs = []           # filtered, newest first
+        self.cache = {}
+        self.all_runs = []
+        self.runs = []
+        self.character = ALL
+        self.view = VIEWS[0]
         self.selected_file = None
+        self._last_seen = set()
 
         self._style()
         self._build()
         self.reload(force=True)
         self.after(POLL_MS, self._poll)
 
-    # ----- look & feel ---------------------------------------------------
+    # ----- styling ------------------------------------------------------
     def _style(self):
         st = ttk.Style(self)
         st.theme_use("clam")
-        st.configure(".", background=BG, foreground=FG, fieldbackground=PANEL, font=("Segoe UI", 10))
-        st.configure("TFrame", background=BG)
-        st.configure("TLabel", background=BG, foreground=FG)
-        st.configure("Dim.TLabel", foreground=DIM)
-        st.configure("TCheckbutton", background=BG, foreground=FG)
-        st.map("TCheckbutton", background=[("active", BG)])
-        st.configure("TButton", background=PANEL, foreground=FG, borderwidth=1, padding=(10, 3))
-        st.map("TButton", background=[("active", SEL)])
-        st.configure("TNotebook", background=BG, borderwidth=0)
-        st.configure("TNotebook.Tab", background=PANEL, foreground=DIM, padding=(16, 6),
-                     font=("Segoe UI", 10, "bold"))
-        st.map("TNotebook.Tab", background=[("selected", SEL)], foreground=[("selected", ACCENT)])
-        st.configure("Treeview", background=PANEL, fieldbackground=PANEL, foreground=FG,
-                     rowheight=24, borderwidth=0)
-        st.configure("Treeview.Heading", background=BG, foreground=ACCENT, relief="flat",
-                     font=("Segoe UI", 9, "bold"))
-        st.map("Treeview", background=[("selected", SEL)], foreground=[("selected", ACCENT)])
-        st.configure("TCombobox", fieldbackground=PANEL, background=PANEL, foreground=FG,
-                     arrowcolor=FG)
-        st.map("TCombobox", fieldbackground=[("readonly", PANEL)], foreground=[("readonly", FG)],
-               selectbackground=[("readonly", PANEL)], selectforeground=[("readonly", FG)])
-        self.option_add("*TCombobox*Listbox.background", PANEL)
-        self.option_add("*TCombobox*Listbox.foreground", FG)
-        st.configure("TEntry", fieldbackground=PANEL, foreground=FG, insertcolor=FG)
-
-    def _make_text(self, parent):
-        frame = ttk.Frame(parent)
-        txt = tk.Text(frame, bg=PANEL, fg=FG, insertbackground=FG, relief="flat", wrap="word",
-                      font=("Consolas", 10), padx=14, pady=10, borderwidth=0,
-                      highlightthickness=0, cursor="arrow")
-        sb = ttk.Scrollbar(frame, orient="vertical", command=txt.yview)
-        txt.configure(yscrollcommand=sb.set)
-        txt.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-        for tag, opts in {
-            "h1": dict(font=("Segoe UI", 15, "bold"), foreground=ACCENT, spacing1=4, spacing3=6),
-            "h2": dict(font=("Segoe UI", 12, "bold"), foreground=INFO, spacing1=12, spacing3=4),
-            "dim": dict(foreground=DIM),
-            "good": dict(foreground=GOOD),
-            "bad": dict(foreground=BAD),
-            "warn": dict(foreground=WARN),
-            "info": dict(foreground=INFO),
-            "bold": dict(font=("Consolas", 10, "bold")),
-            "picked": dict(foreground=GOOD, font=("Consolas", 10, "bold")),
-            "skipped": dict(foreground=DIM, overstrike=True),
-            "floorhead": dict(font=("Consolas", 10, "bold")),
-            "combat": dict(foreground="#e2a0a6"),
-            "elite": dict(foreground=WARN, font=("Consolas", 10, "bold")),
-            "boss": dict(foreground=BAD, font=("Consolas", 10, "bold")),
-            "callout": dict(lmargin1=6, lmargin2=26, spacing1=2, font=("Segoe UI", 10)),
-            "actbar": dict(background=SEL, foreground=ACCENT, font=("Segoe UI", 11, "bold"),
-                           spacing1=10, spacing3=4),
-        }.items():
-            txt.tag_configure(tag, **opts)
-        txt.configure(state="disabled")
-        return frame, txt
+        st.configure(".", background=BG, foreground=FG, font=(UI_FONT, 10))
+        st.configure("Treeview", background=CARD, fieldbackground=CARD, foreground=FG,
+                     rowheight=30, borderwidth=0, relief="flat", font=(UI_FONT, 10))
+        st.configure("Treeview.Heading", background=CARD, foreground=DIM, relief="flat",
+                     borderwidth=0, font=(UI_FONT_SEMI, 9), padding=(6, 6))
+        st.map("Treeview.Heading", background=[("active", CARD)])
+        st.map("Treeview", background=[("selected", CARD_HI)], foreground=[("selected", FG)])
+        st.layout("Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
+        st.configure("Modern.Vertical.TScrollbar", background=BORDER, troughcolor=CARD,
+                     bordercolor=CARD, arrowcolor=CARD, lightcolor=BORDER, darkcolor=BORDER,
+                     gripcount=0, arrowsize=0, width=8)
+        st.map("Modern.Vertical.TScrollbar", background=[("active", FAINT)])
+        st.configure("TEntry", fieldbackground=CARD, foreground=FG, insertcolor=FG,
+                     bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, padding=6)
+        st.configure("TCheckbutton", background=SIDEBAR, foreground=DIM, font=(UI_FONT, 9),
+                     indicatorbackground=CARD, indicatorforeground=ACCENT, focuscolor=SIDEBAR)
+        st.map("TCheckbutton", background=[("active", SIDEBAR)], foreground=[("active", FG)],
+               indicatorbackground=[("selected", CARD_HI)])
 
     # ----- layout --------------------------------------------------------
     def _build(self):
-        top = ttk.Frame(self, padding=(10, 8))
-        top.pack(fill="x")
-        ttk.Label(top, text="History folder:").pack(side="left")
-        ttk.Entry(top, textvariable=self.history_dir, width=70).pack(side="left", padx=6)
-        ttk.Button(top, text="Browse...", command=self._browse).pack(side="left")
-        ttk.Button(top, text="Refresh", command=lambda: self.reload(force=True)).pack(side="left", padx=6)
-        ttk.Checkbutton(top, text="Auto-refresh", variable=self.auto_refresh).pack(side="left", padx=6)
+        # Sidebar
+        self.sidebar = tk.Frame(self, bg=SIDEBAR, width=250)
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
+        tk.Label(self.sidebar, text="STS2 Coach", bg=SIDEBAR, fg=FG,
+                 font=(UI_FONT_SEMI, 17)).pack(anchor="w", padx=22, pady=(22, 0))
+        tk.Label(self.sidebar, text="Slay the Spire 2 run analysis", bg=SIDEBAR, fg=FAINT,
+                 font=(UI_FONT, 9)).pack(anchor="w", padx=22, pady=(0, 18))
+        tk.Label(self.sidebar, text="CHARACTERS", bg=SIDEBAR, fg=FAINT,
+                 font=(UI_FONT_SEMI, 8)).pack(anchor="w", padx=22, pady=(4, 6))
+        self.char_list = tk.Frame(self.sidebar, bg=SIDEBAR)
+        self.char_list.pack(fill="x", padx=10)
 
-        filt = ttk.Frame(self, padding=(10, 0, 10, 6))
-        filt.pack(fill="x")
-        ttk.Label(filt, text="Character:").pack(side="left")
-        self.char_box = ttk.Combobox(filt, textvariable=self.char_filter, width=14, state="readonly",
-                                     values=["All"])
-        self.char_box.pack(side="left", padx=(4, 12))
-        self.char_box.bind("<<ComboboxSelected>>", lambda e: self.reload())
-        ttk.Label(filt, text="Mode:").pack(side="left")
-        self.mode_box = ttk.Combobox(filt, textvariable=self.mode_filter, width=10, state="readonly",
-                                     values=["All"])
-        self.mode_box.pack(side="left", padx=(4, 12))
-        self.mode_box.bind("<<ComboboxSelected>>", lambda e: self.reload())
-        ttk.Checkbutton(filt, text="Count abandoned runs as losses", variable=self.include_abandoned,
-                        command=self.reload).pack(side="left", padx=6)
-        ttk.Checkbutton(filt, text="Include co-op runs", variable=self.include_multi,
-                        command=self.reload).pack(side="left", padx=6)
-        ttk.Label(filt, textvariable=self.status, style="Dim.TLabel").pack(side="right")
+        bottom = tk.Frame(self.sidebar, bg=SIDEBAR)
+        bottom.pack(side="bottom", fill="x", padx=18, pady=16)
+        ttk.Checkbutton(bottom, text="Count quits as losses", variable=self.include_abandoned,
+                        command=self.refresh_views).pack(anchor="w", pady=2)
+        ttk.Checkbutton(bottom, text="Include co-op runs", variable=self.include_multi,
+                        command=self.reload).pack(anchor="w", pady=2)
+        ttk.Checkbutton(bottom, text="Auto-refresh on new runs", variable=self.auto_refresh).pack(anchor="w", pady=2)
+        self._flat_button(bottom, "Change folder...", self._settings, bg=SIDEBAR).pack(anchor="w", pady=(10, 4))
+        tk.Label(bottom, textvariable=self.status, bg=SIDEBAR, fg=FAINT, font=(UI_FONT, 8),
+                 justify="left", wraplength=210, anchor="w").pack(anchor="w", fill="x")
 
-        nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        # Main area
+        main = tk.Frame(self, bg=BG)
+        main.pack(side="left", fill="both", expand=True)
 
-        # Tab 1
-        f1, self.insights = self._make_text(nb)
-        nb.add(f1, text="  Coaching Insights & Leaks  ")
+        header = tk.Frame(main, bg=BG)
+        header.pack(fill="x", padx=28, pady=(22, 8))
+        self.title_dot = tk.Label(header, text="●", bg=BG, fg=ACCENT, font=(UI_FONT, 20))
+        self.title_dot.pack(side="left")
+        self.title_lbl = tk.Label(header, text=ALL, bg=BG, fg=FG, font=(UI_FONT_SEMI, 22))
+        self.title_lbl.pack(side="left", padx=(6, 0))
+        self.subtitle_lbl = tk.Label(header, text="", bg=BG, fg=DIM, font=(UI_FONT, 10))
+        self.subtitle_lbl.pack(side="left", padx=14, pady=(8, 0))
 
-        # Tab 2
-        f2 = ttk.Frame(nb)
-        nb.add(f2, text="  Run Autopsy  ")
-        pane = ttk.PanedWindow(f2, orient="horizontal")
+        self.cards_row = tk.Frame(main, bg=BG)
+        self.cards_row.pack(fill="x", padx=28, pady=(4, 14))
+
+        # Segmented tabs
+        tabs = tk.Frame(main, bg=BG)
+        tabs.pack(fill="x", padx=28)
+        self.tab_widgets = {}
+        for v in VIEWS:
+            f = tk.Frame(tabs, bg=BG, cursor="hand2")
+            f.pack(side="left", padx=(0, 26))
+            lbl = tk.Label(f, text=v, bg=BG, fg=DIM, font=(UI_FONT_SEMI, 11), cursor="hand2")
+            lbl.pack(pady=(0, 6))
+            bar = tk.Frame(f, bg=BG, height=3)
+            bar.pack(fill="x")
+            for w in (f, lbl):
+                w.bind("<Button-1>", lambda e, v=v: self.set_view(v))
+            self.tab_widgets[v] = (lbl, bar)
+        tk.Frame(main, bg=BORDER, height=1).pack(fill="x", padx=28)
+
+        self.content = tk.Frame(main, bg=BG)
+        self.content.pack(fill="both", expand=True, padx=28, pady=(14, 22))
+
+        # View: habits
+        self.habits_view = ScrollFrame(self.content)
+        # View: stats
+        self.stats_view, self.stats_txt = text_widget(self.content)
+        # View: autopsy
+        self.autopsy_view = tk.Frame(self.content, bg=BG)
+        pane = tk.PanedWindow(self.autopsy_view, orient="horizontal", bg=BG, sashwidth=10,
+                              borderwidth=0, sashrelief="flat")
         pane.pack(fill="both", expand=True)
-
-        left = ttk.Frame(pane)
+        left = tk.Frame(pane, bg=CARD)
         cols = ("date", "char", "asc", "result", "floor", "killer")
         self.tree = ttk.Treeview(left, columns=cols, show="headings", selectmode="browse")
-        for c, w, t in (("date", 128, "Date"), ("char", 96, "Character"), ("asc", 36, "Asc"),
-                        ("result", 104, "Result"), ("floor", 44, "Floor"), ("killer", 170, "Killer")):
-            self.tree.heading(c, text=t)
-            self.tree.column(c, width=w, anchor="w" if c in ("date", "char", "killer") else "center",
+        for c, w, t in (("date", 100, "DATE"), ("char", 92, "CHARACTER"), ("asc", 40, "ASC"),
+                        ("result", 74, "RESULT"), ("floor", 52, "FLOOR"), ("killer", 150, "KILLED BY")):
+            self.tree.heading(c, text=t, anchor="w" if c in ("date", "char", "killer") else "center")
+            self.tree.column(c, width=w, minwidth=36,
+                             anchor="w" if c in ("date", "char", "killer") else "center",
                              stretch=(c == "killer"))
         self.tree.tag_configure("WIN", foreground=GOOD)
-        self.tree.tag_configure("LOSS", foreground=BAD)
-        self.tree.tag_configure("ABANDONED", foreground=DIM)
-        tsb = ttk.Scrollbar(left, orient="vertical", command=self.tree.yview)
+        self.tree.tag_configure("LOSS", foreground=FG)
+        self.tree.tag_configure("ABANDONED", foreground=FAINT)
+        tsb = ttk.Scrollbar(left, orient="vertical", command=self.tree.yview, style="Modern.Vertical.TScrollbar")
         self.tree.configure(yscrollcommand=tsb.set)
-        self.tree.pack(side="left", fill="both", expand=True)
+        self.tree.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
         tsb.pack(side="right", fill="y")
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
-        pane.add(left, weight=3)
+        right, self.autopsy_txt = text_widget(pane)
+        pane.add(left, minsize=340, width=450)
+        pane.add(right, minsize=420)
 
-        right, self.autopsy = self._make_text(pane)
-        pane.add(right, weight=5)
+        self.set_view(self.view)
 
-    # ----- data loading --------------------------------------------------
-    def _browse(self):
-        d = filedialog.askdirectory(initialdir=self.history_dir.get() or os.path.expanduser("~"))
-        if d:
-            self.history_dir.set(os.path.normpath(d))
+    def _flat_button(self, parent, text, cmd, bg=CARD, fg=FG):
+        b = tk.Label(parent, text=text, bg=CARD_HI, fg=fg, font=(UI_FONT_SEMI, 9),
+                     padx=12, pady=5, cursor="hand2")
+        b.bind("<Button-1>", lambda e: cmd())
+        b.bind("<Enter>", lambda e: b.configure(bg=BORDER))
+        b.bind("<Leave>", lambda e: b.configure(bg=CARD_HI))
+        return b
+
+    def _settings(self):
+        win = tk.Toplevel(self)
+        win.title("History folder")
+        win.configure(bg=BG)
+        win.transient(self)
+        tk.Label(win, text="Folder with your .run files", bg=BG, fg=FG,
+                 font=(UI_FONT_SEMI, 11)).pack(anchor="w", padx=18, pady=(16, 6))
+        var = tk.StringVar(value=self.history_dir.get())
+        ttk.Entry(win, textvariable=var, width=90).pack(fill="x", padx=18)
+        row = tk.Frame(win, bg=BG)
+        row.pack(fill="x", padx=18, pady=14)
+
+        def browse():
+            d = filedialog.askdirectory(initialdir=var.get() or os.path.expanduser("~"), parent=win)
+            if d:
+                var.set(os.path.normpath(d))
+
+        def save():
+            self.history_dir.set(var.get())
             self.cache.clear()
+            win.destroy()
             self.reload(force=True)
 
+        self._flat_button(row, "Browse...", browse).pack(side="left")
+        self._flat_button(row, "Save", save, fg=ACCENT).pack(side="right")
+
+    # ----- sidebar + header ----------------------------------------------
+    def _render_sidebar(self):
+        for c in self.char_list.winfo_children():
+            c.destroy()
+        inc = self.include_abandoned.get()
+        groups = defaultdict(list)
+        for r in self.all_runs:
+            groups[r["character"]].append(r)
+        entries = [(ALL, self.all_runs)] + sorted(groups.items(), key=lambda kv: -len(kv[1]))
+        for name, rs in entries:
+            w = sum(1 for r in rs if r["win"])
+            l = sum(1 for r in rs if is_loss(r, inc))
+            sel = name == self.character
+            bg = CARD_HI if sel else SIDEBAR
+            row = tk.Frame(self.char_list, bg=bg, cursor="hand2")
+            row.pack(fill="x", pady=1)
+            tk.Frame(row, bg=(char_color(name) if name != ALL else ACCENT) if sel else bg,
+                     width=3).pack(side="left", fill="y")
+            dot = tk.Label(row, text="●", bg=bg, fg=char_color(name) if name != ALL else FG,
+                           font=(UI_FONT, 11))
+            dot.pack(side="left", padx=(10, 6), pady=8)
+            nm = tk.Label(row, text=name, bg=bg, fg=FG if sel else "#c3c8d4",
+                          font=(UI_FONT_SEMI if sel else UI_FONT, 10))
+            nm.pack(side="left")
+            rec = tk.Label(row, text=f"{w}-{l}  {pct(w, w + l):.0f}%", bg=bg,
+                           fg=GOOD if pct(w, w + l) >= 25 else DIM, font=(UI_FONT, 9))
+            rec.pack(side="right", padx=12)
+            widgets = (row, dot, nm, rec)
+            for wd in widgets:
+                wd.bind("<Button-1>", lambda e, n=name: self.set_character(n))
+                if not sel:
+                    wd.bind("<Enter>", lambda e, ws=widgets: [x.configure(bg=CARD) for x in ws])
+                    wd.bind("<Leave>", lambda e, ws=widgets: [x.configure(bg=SIDEBAR) for x in ws])
+
+    def _stat_card(self, parent, value, caption, color=FG):
+        f = tk.Frame(parent, bg=CARD, padx=18, pady=12)
+        f.pack(side="left", padx=(0, 12), fill="y")
+        tk.Label(f, text=value, bg=CARD, fg=color, font=(UI_FONT_SEMI, 18)).pack(anchor="w")
+        tk.Label(f, text=caption, bg=CARD, fg=DIM, font=(UI_FONT, 9)).pack(anchor="w")
+
+    def _render_header(self):
+        name = self.character
+        self.title_lbl.configure(text=name)
+        self.title_dot.configure(fg=char_color(name) if name != ALL else ACCENT)
+        for c in self.cards_row.winfo_children():
+            c.destroy()
+        inc = self.include_abandoned.get()
+        rs = self.runs
+        wins = [r for r in rs if r["win"]]
+        losses = [r for r in rs if is_loss(r, inc)]
+        decided = wins + losses
+        self.subtitle_lbl.configure(text=f"{len(rs)} runs  ·  {len([r for r in rs if r['abandoned']])} abandoned")
+        wr = pct(len(wins), len(decided))
+        self._stat_card(self.cards_row, f"{wr:.0f}%", "Win rate", GOOD if wr >= 25 else WARN if wr >= 10 else BAD)
+        self._stat_card(self.cards_row, f"{len(wins)}–{len(losses)}", "Wins – Losses")
+        self._stat_card(self.cards_row, f"{avg([r['final_floor'] for r in losses]):.0f}" if losses else "-",
+                        "Avg floor reached in losses")
+        self._stat_card(self.cards_row, f"{avg([r['deck_size'] for r in decided]):.0f}" if decided else "-",
+                        "Avg final deck size")
+        asc = max((r["ascension"] for r in wins), default=None)
+        self._stat_card(self.cards_row, f"A{asc}" if asc is not None else "-", "Highest ascension won")
+        recent = sorted(decided, key=lambda r: r["start"], reverse=True)[:10]
+        if recent:
+            f = tk.Frame(self.cards_row, bg=CARD, padx=18, pady=12)
+            f.pack(side="left", fill="y")
+            strip = tk.Frame(f, bg=CARD)
+            strip.pack(anchor="w", pady=(6, 4))
+            for r in reversed(recent):
+                tk.Frame(strip, bg=GOOD if r["win"] else BAD, width=14, height=14).pack(side="left", padx=2)
+            tk.Label(f, text="Last 10 results (oldest → newest)", bg=CARD, fg=DIM,
+                     font=(UI_FONT, 9)).pack(anchor="w", pady=(4, 0))
+
+    # ----- navigation ----------------------------------------------------
+    def set_character(self, name):
+        self.character = name
+        self.selected_file = None
+        self._apply_filter()
+        self.refresh_views()
+
+    def set_view(self, view):
+        self.view = view
+        for v, (lbl, bar) in self.tab_widgets.items():
+            on = v == view
+            lbl.configure(fg=FG if on else DIM)
+            bar.configure(bg=ACCENT if on else BG)
+        for w in (self.habits_view, self.stats_view, self.autopsy_view):
+            w.pack_forget()
+        {"Habits & Fixes": self.habits_view, "Stats": self.stats_view,
+         "Run Autopsy": self.autopsy_view}[view].pack(fill="both", expand=True)
+
+    # ----- data ----------------------------------------------------------
     def _scan(self):
-        folder = self.history_dir.get()
         found = {}
         try:
-            with os.scandir(folder) as it:
+            with os.scandir(self.history_dir.get()) as it:
                 for e in it:
                     if e.is_file() and e.name.endswith(".run"):
                         found[e.path] = e.stat().st_mtime
@@ -585,8 +1005,7 @@ class CoachApp(tk.Tk):
                 try:
                     run = parse_run(p, sid)
                 except (OSError, ValueError, KeyError, TypeError, IndexError):
-                    run = None   # half-written file - try again next poll
-                    mt = -1
+                    run, mt = None, -1          # half-written file: retry next poll
                 self.cache[p] = (mt, run)
                 changed = True
         for p in list(self.cache):
@@ -599,93 +1018,216 @@ class CoachApp(tk.Tk):
         if self.auto_refresh.get():
             found = self._scan()
             if found is not None and self._load_changed(found):
-                new = [p for p in found if p not in self._last_seen] if hasattr(self, "_last_seen") else []
+                new = [p for p in found if p not in self._last_seen]
                 self.reload()
                 if new:
                     newest = max(new, key=lambda p: found[p])
-                    self._select_file(os.path.basename(newest))
-                    self.status.set(self.status.get() + f"  |  new run: {os.path.basename(newest)}")
+                    run = next((r for r in self.runs if r["path"] == newest), None)
+                    if run:
+                        self.selected_file = run["file"]
+                        self._render_list()
+                        self.status.set(self.status.get() + f"\nNew run: {run['character']} - {run['result']}")
         self.after(POLL_MS, self._poll)
 
     def reload(self, force=False):
         found = self._scan()
-        if found is None:
-            self.status.set("Folder not found - use Browse...")
-            self.runs = []
-            self._render_insights()
-            self._render_list()
-            return
         if force:
             self.cache.clear()
-        self._load_changed(found)
-        self._last_seen = set(found)
+        if found is None:
+            self.status.set("Folder not found - click 'Change folder...'")
+            self.all_runs = []
+        else:
+            self._load_changed(found)
+            self._last_seen = set(found)
+            runs = [r for _, r in self.cache.values() if r and r["floors"]]
+            if not self.include_multi.get():
+                runs = [r for r in runs if not r["multiplayer"]]
+            self.all_runs = runs
+            self.status.set(f"{len(runs)} runs loaded · updated {time.strftime('%H:%M:%S')}")
+        if self.character != ALL and not any(r["character"] == self.character for r in self.all_runs):
+            self.character = ALL
+        self._apply_filter()
+        self.refresh_views()
 
-        all_runs = [r for _, r in self.cache.values() if r and r["floors"]]
-        chars = sorted({r["character"] for r in all_runs})
-        modes = sorted({r["mode"] for r in all_runs})
-        self.char_box["values"] = ["All"] + chars
-        self.mode_box["values"] = ["All"] + modes
+    def _apply_filter(self):
+        rs = self.all_runs if self.character == ALL else [r for r in self.all_runs if r["character"] == self.character]
+        self.runs = sorted(rs, key=lambda r: r["start"], reverse=True)
 
-        runs = all_runs
-        if self.char_filter.get() != "All":
-            runs = [r for r in runs if r["character"] == self.char_filter.get()]
-        if self.mode_filter.get() != "All":
-            runs = [r for r in runs if r["mode"] == self.mode_filter.get()]
-        if not self.include_multi.get():
-            runs = [r for r in runs if not r["multiplayer"]]
-        self.runs = sorted(runs, key=lambda r: r["start"], reverse=True)
-        self.status.set(f"{len(self.runs)} runs loaded  |  updated {time.strftime('%H:%M:%S')}")
-        self._render_insights()
+    def refresh_views(self):
+        self._render_sidebar()
+        self._render_header()
+        self._render_habits()
+        self._render_stats()
         self._render_list()
 
-    # ----- Tab 1: insights ----------------------------------------------
-    def _render_insights(self):
-        t = self.insights
+    # ----- Habits & Fixes view -------------------------------------------
+    def _render_habits(self):
+        sf = self.habits_view
+        sf.clear()
+        inner = sf.inner
+        inc = self.include_abandoned.get()
+        habits, fine, wins, losses = habit_report(self.runs, inc)
+        who = "this character" if self.character != ALL else "all characters"
+
+        if len(losses) < 2:
+            box = tk.Frame(inner, bg=CARD, padx=22, pady=20)
+            box.pack(fill="x", pady=(0, 12))
+            wrap_label(box, "Not enough losses yet to find patterns.", 13, weight="bold").pack(fill="x")
+            wrap_label(box, f"Play a few more runs with {who} and this page will rank the habits that "
+                            f"keep ending your runs.", 10, fg=DIM).pack(fill="x", pady=(4, 0))
+            return
+
+        # Focus banner
+        if habits:
+            top = habits[0]
+            ban = tk.Frame(inner, bg="#2a2216", padx=22, pady=16)
+            ban.pack(fill="x", pady=(0, 14))
+            tk.Label(ban, text="YOUR #1 FOCUS RIGHT NOW", bg="#2a2216", fg=ACCENT,
+                     font=(UI_FONT_SEMI, 8)).pack(anchor="w")
+            wrap_label(ban, top["h"]["title"], 15, bg="#2a2216", weight="bold").pack(fill="x", pady=(2, 2))
+            wrap_label(ban, top["h"]["fix"][0], 10, bg="#2a2216", fg="#e9d9bf").pack(fill="x")
+
+        wrap_label(inner, f"Run-killing habits  ·  based on {len(losses)} losses and {len(wins)} wins",
+                   12, bg=BG, weight="bold").pack(fill="x", pady=(2, 2))
+        wrap_label(inner, "Ranked by how much more often they show up in your losses than in your wins.",
+                   9, bg=BG, fg=DIM).pack(fill="x", pady=(0, 10))
+
+        if not habits:
+            box = tk.Frame(inner, bg=CARD, padx=22, pady=18)
+            box.pack(fill="x", pady=(0, 12))
+            wrap_label(box, "No recurring run-killing habit found. Nice!", 12, weight="bold", fg=GOOD).pack(fill="x")
+
+        for i, it in enumerate(habits, 1):
+            self._habit_card(inner, i, it)
+
+        if fine:
+            wrap_label(inner, "Under control", 12, bg=BG, weight="bold").pack(fill="x", pady=(16, 6))
+            chips = tk.Frame(inner, bg=BG)
+            chips.pack(fill="x")
+            for j, it in enumerate(fine):
+                c = tk.Frame(chips, bg="#16261d", padx=12, pady=7)
+                c.grid(row=j // 3, column=j % 3, sticky="ew", padx=(0, 8), pady=4)
+                tk.Label(c, text="✓  " + it["h"]["title"], bg="#16261d", fg=GOOD,
+                         font=(UI_FONT, 9), anchor="w").pack(anchor="w")
+            for col in range(3):
+                chips.grid_columnconfigure(col, weight=1)
+
+    def _habit_card(self, parent, rank, it):
+        h = it["h"]
+        color = {"high": BAD, "med": WARN, "low": INFO}[it["sev"]]
+        label = {"high": "MAJOR LEAK", "med": "LEAK", "low": "MINOR"}[it["sev"]]
+        outer = tk.Frame(parent, bg=CARD)
+        outer.pack(fill="x", pady=(0, 12))
+        tk.Frame(outer, bg=color, width=4).pack(side="left", fill="y")
+        body = tk.Frame(outer, bg=CARD, padx=20, pady=16)
+        body.pack(side="left", fill="both", expand=True)
+
+        top = tk.Frame(body, bg=CARD)
+        top.pack(fill="x")
+        tk.Label(top, text=f"{rank}", bg=CARD, fg=FAINT, font=(UI_FONT_SEMI, 16)).pack(side="left", padx=(0, 12))
+        tk.Label(top, text=h["title"], bg=CARD, fg=FG, font=(UI_FONT_SEMI, 13)).pack(side="left")
+        tk.Label(top, text=f" {label} ", bg=color, fg=BG, font=(UI_FONT_SEMI, 8)).pack(side="right")
+
+        # frequency bars
+        bars = tk.Frame(body, bg=CARD)
+        bars.pack(fill="x", pady=(10, 4))
+        self._bar(bars, "In your losses", it["loss_rate"], color,
+                  f"{it['loss_hits']}/{it['loss_n']}")
+        if h["kind"] == "run" and it.get("win_n"):
+            self._bar(bars, "In your wins", it["win_rate"], GOOD, f"{it['win_hits']}/{it['win_n']}")
+
+        # numbers
+        fmt = h["fmt"]
+        if h["id"] == "elite_death":
+            nums = f"{it['loss_rate']:.0f}% of your losses ended at an elite."
+        else:
+            nums = f"Your average: {fmt.format(it['loss_avg'])} {h['unit']} in losses"
+            if h["kind"] == "run" and it.get("win_avg") is not None and it.get("win_n"):
+                nums += f"  vs  {fmt.format(it['win_avg'])} in wins"
+            nums += "."
+        if h["kind"] == "run" and it.get("wr_with") is not None and it.get("wr_without") is not None \
+                and it.get("win_n"):
+            nums += f"  Win rate with this habit {it['wr_with']:.0f}%, without {it['wr_without']:.0f}%."
+        wrap_label(body, nums, 10, fg=INFO).pack(fill="x", pady=(6, 2))
+        wrap_label(body, h["why"], 10, fg=DIM).pack(fill="x", pady=(2, 8))
+
+        tk.Label(body, text="WHAT TO DO", bg=CARD, fg=ACCENT, font=(UI_FONT_SEMI, 8)).pack(anchor="w")
+        for tip in h["fix"]:
+            row = tk.Frame(body, bg=CARD)
+            row.pack(fill="x", pady=1)
+            tk.Label(row, text="→", bg=CARD, fg=ACCENT, font=(UI_FONT_SEMI, 10)).pack(side="left", anchor="n")
+            wrap_label(row, tip, 10, pad=10).pack(side="left", fill="x", expand=True, padx=(8, 0))
+
+        ex = sorted(it["examples"], key=lambda r: r["start"], reverse=True)[:4]
+        if ex:
+            exr = tk.Frame(body, bg=CARD)
+            exr.pack(fill="x", pady=(10, 0))
+            tk.Label(exr, text="Recent examples:", bg=CARD, fg=FAINT, font=(UI_FONT, 9)).pack(side="left")
+            for r in ex:
+                d = datetime.fromtimestamp(r["start"]).strftime("%d %b") if r["start"] else "?"
+                txt = f"{d} · {r['character']} · F{r['final_floor']}"
+                lk = tk.Label(exr, text=txt, bg=CARD_HI, fg=INFO, font=(UI_FONT, 9), padx=8, pady=2,
+                              cursor="hand2")
+                lk.pack(side="left", padx=(8, 0))
+                lk.bind("<Button-1>", lambda e, f=r["file"]: self.open_autopsy(f))
+
+    def _bar(self, parent, label, value, color, count):
+        row = tk.Frame(parent, bg=CARD)
+        row.pack(fill="x", pady=2)
+        tk.Label(row, text=label, bg=CARD, fg=DIM, font=(UI_FONT, 9), width=14, anchor="w").pack(side="left")
+        track = tk.Frame(row, bg=BORDER, height=8, width=260)
+        track.pack(side="left", padx=(4, 10))
+        track.pack_propagate(False)
+        fill_w = max(2, int(260 * (value or 0) / 100))
+        tk.Frame(track, bg=color, height=8, width=fill_w).place(x=0, y=0)
+        tk.Label(row, text=f"{(value or 0):.0f}%  ({count})", bg=CARD, fg=FG, font=(UI_FONT, 9)).pack(side="left")
+
+    def open_autopsy(self, fname):
+        self.selected_file = fname
+        self.set_view("Run Autopsy")
+        self._render_list()
+
+    # ----- Stats view ----------------------------------------------------
+    def _render_stats(self):
+        t = self.stats_txt
         t.configure(state="normal")
         t.delete("1.0", "end")
         w = lambda s, *tags: t.insert("end", s, tags)
-
         runs = self.runs
         if not runs:
             w("No runs found.\n", "h1")
-            w("Point the folder box at your STS2 'saves\\history' folder.\n", "dim")
+            w("Use 'Change folder...' in the sidebar to point at your STS2 saves\\history folder.\n", "dim")
             t.configure(state="disabled")
             return
         inc = self.include_abandoned.get()
         a = aggregate(runs, inc)
         nw, nl = len(a["wins"]), len(a["losses"])
 
-        w("Coaching Insights & Leaks\n", "h1")
-        w(f"{len(runs)} runs analysed  ·  abandoned runs "
-          f"{'counted as losses (floor-1 resets ignored)' if inc else 'excluded from loss stats'}\n", "dim")
-
-        # Record
         w("Record\n", "h2")
         w("  Wins ", "bold"); w(f"{nw}", "good")
         w("   Losses ", "bold"); w(f"{nl}", "bad")
         w(f"   Abandoned {len(a['abandoned'])}", "dim")
-        w(f"   Win rate ", "bold"); w(f"{pct(nw, nw + nl):.1f}%\n", "good" if pct(nw, nw + nl) >= 30 else "warn")
-        w(f"  Avg final deck size: {a['deck_all']:.1f}   (wins {a['deck_win']:.1f}  ·  losses {a['deck_loss']:.1f})\n")
-        if a["chars"]:
+        w("   Win rate ", "bold"); w(f"{pct(nw, nw + nl):.1f}%\n", "good" if pct(nw, nw + nl) >= 25 else "warn")
+        w(f"  Avg final deck: {a['deck_all']:.1f}   (wins {a['deck_win']:.1f} · losses {a['deck_loss']:.1f})\n")
+        if self.character == ALL and a["chars"]:
             w("  By character: ", "dim")
-            w("   ".join(f"{c} {v[0]}-{v[1]} ({pct(v[0], sum(v)):.0f}%)"
-                         for c, v in sorted(a["chars"].items(), key=lambda kv: -sum(kv[1]))) + "\n")
+            w("   ".join(f"{c} {v[0]}-{v[1]}" for c, v in sorted(a["chars"].items(), key=lambda kv: -sum(kv[1]))) + "\n")
+        asc = Counter(r["ascension"] for r in a["wins"])
+        if asc:
+            w("  Wins by ascension: " + "   ".join(f"A{k}: {v}" for k, v in sorted(asc.items())) + "\n", "dim")
 
-        # Card picks
-        w("Card rewards: pick vs skip by Act\n", "h2")
-        w(f"  {'Act':<28}{'Rewards':>8}{'Picked':>10}{'Skipped':>10}\n", "dim")
+        w("Card rewards - pick vs skip\n", "h2")
+        w(f"  {'Act':<30}{'Rewards':>8}{'Picked':>10}{'Skipped':>10}\n", "faint")
         for act in sorted(a["picks"]):
             offers, picked, names = a["picks"][act]
             lbl = f"Act {act} ({'/'.join(sorted(names))})"
-            w(f"  {lbl:<28}{offers:>8}{pct(picked, offers):>9.0f}%")
             sk = pct(offers - picked, offers)
+            w(f"  {lbl:<30}{offers:>8}{pct(picked, offers):>9.0f}%")
             w(f"{sk:>9.0f}%\n", "warn" if act == 1 and sk > 35 else "")
 
-        # Fights
-        w("Fight speed & damage (per fight)\n", "h2")
-        w(f"  {'Act':<26}{'Type':<9}{'Fights':>7}{'Avg turns':>11}{'Avg dmg':>10}\n", "dim")
+        w("Fight speed & damage\n", "h2")
+        w(f"  {'Act':<26}{'Type':<9}{'Fights':>7}{'Avg turns':>11}{'Avg dmg':>10}\n", "faint")
         order = sorted(a["fights"], key=lambda k: (ACT_ORDER.index(k) if k in ACT_ORDER else 99, k))
-        slow_flags = []
         for act_id in order:
             num = a["act_num"].get(act_id, 0)
             for rt in COMBAT_TYPES:
@@ -694,90 +1236,86 @@ class CoachApp(tk.Tk):
                     continue
                 turns = avg([d[0] for d in data])
                 dmg = avg([d[1] for d in data])
-                lbl = f"Act {num} {pretty_act(act_id)}"
-                w(f"  {lbl:<26}{rt:<9}{len(data):>7}")
                 limit = SLOW_TURNS_BY_ACT.get(num)
                 slow = rt == "monster" and limit and turns > limit
+                w(f"  {'Act ' + str(num) + ' ' + pretty_act(act_id):<26}{rt:<9}{len(data):>7}")
                 w(f"{turns:>11.2f}", "bad" if slow else "good" if rt == "monster" else "")
                 w(f"{dmg:>10.1f}")
                 if slow:
-                    w(f"   ◄ SLOW (target ≤ {limit})", "bad")
-                    slow_flags.append((num, act_id, turns, limit))
+                    w(f"   ◄ slow (target ≤ {limit})", "bad")
                 w("\n")
-        if slow_flags:
-            for num, act_id, turns, limit in slow_flags:
-                if num == 1:
-                    w(f"  ► Act 1 ({pretty_act(act_id)}) hallway fights average {turns:.2f} turns (target {limit}). "
-                      f"Prioritise frontloaded damage / AoE in your first 3-4 card rewards.\n", "warn")
-                else:
-                    w(f"  ► Act {num} ({pretty_act(act_id)}) hallways are slow ({turns:.1f} turns) - "
-                      f"your scaling/damage isn't keeping up.\n", "warn")
 
-        # Leaks
         w("Resource leaks at death\n", "h2")
         if nl:
             gl, pl, al = len(a["gold_leak"]), len(a["pot_leak"]), len(a["any_leak"])
-            w(f"  Died with >{GOLD_LEAK_THRESHOLD} unspent gold:  ")
+            w(f"  Died with >{GOLD_LEAK_THRESHOLD} unspent gold   ")
             w(f"{gl}/{nl}  ({pct(gl, nl):.0f}%)\n", "bad" if pct(gl, nl) >= 25 else "warn")
-            w("  Died holding unused potions: ")
+            w("  Died holding unused potions   ")
             w(f"{pl}/{nl}  ({pct(pl, nl):.0f}%)\n", "bad" if pct(pl, nl) >= 25 else "warn")
-            w(f"  Either leak:                 {al}/{nl}  ({pct(al, nl):.0f}%)\n", "bold")
+            w(f"  Either leak                   {al}/{nl}  ({pct(al, nl):.0f}%)\n", "bold")
             w(f"  Average gold at death: {a['avg_gold_at_death']:.0f}\n", "dim")
             pots = Counter(p for r in a["pot_leak"] for p in r["unused_potions"]).most_common(5)
             if pots:
                 w("  Potions you most often die holding: " + ", ".join(f"{p} ×{n}" for p, n in pots) + "\n", "dim")
-            w("  (Potions at death are reconstructed from pickups/uses, since the game clears the belt on death.)\n", "dim")
         else:
-            w("  No losses in the current filter.\n", "dim")
+            w("  No losses in this view.\n", "dim")
 
-        # Nemesis
-        w("Nemesis list (what kills you)\n", "h2")
+        w("Nemesis list\n", "h2")
         if a["nemesis"]:
             top = a["nemesis"][0][1]
             for name, n in a["nemesis"]:
-                bar = "█" * max(1, round(20 * n / top))
-                w(f"  {name:<30}", "bold"); w(f"{n:>3}  ", ""); w(bar + "\n", "bad")
-            da = a["death_act"]
-            w("  Deaths by act: " + "   ".join(f"Act {k}: {v}" for k, v in sorted(da.items())) + "\n", "dim")
-            dr = a["death_room"]
-            w("  Deaths by room: " + "   ".join(f"{k}: {v}" for k, v in dr.most_common()) + "\n", "dim")
+                w(f"  {name:<30}", "bold"); w(f"{n:>3}  "); w("█" * max(1, round(24 * n / top)) + "\n", "bad")
+            w("  Deaths by act:  " + "   ".join(f"Act {k}: {v}" for k, v in sorted(a["death_act"].items())) + "\n", "dim")
+            w("  Deaths by room: " + "   ".join(f"{k}: {v}" for k, v in a["death_room"].most_common()) + "\n", "dim")
         else:
-            w("  Nothing has killed you yet in this filter.\n", "good")
+            w("  Nothing has killed you yet here.\n", "good")
 
+        best, worst = card_insights(runs, inc)
+        if best or worst:
+            w("Card insights (cards you added, by final-deck win rate)\n", "h2")
+            if best:
+                w("  Show up in your wins\n", "good")
+                for c, wn, n in best:
+                    w(f"    {c:<28}{wn}/{n} won  ({pct(wn, n):.0f}%)\n")
+            if worst:
+                w("  Keep showing up in losses (never won with them)\n", "bad")
+                for c, wn, n in worst:
+                    w(f"    {c:<28}0/{n} won\n", "dim")
+            w("  Small samples - treat as hints, not rules.\n", "faint")
         t.configure(state="disabled")
 
-    # ----- Tab 2: run list + autopsy -------------------------------------
+    # ----- Autopsy view --------------------------------------------------
     def _render_list(self):
         keep = self.selected_file
+        cols = ("date", "char", "asc", "result", "floor", "killer")
+        self.tree.configure(displaycolumns=cols if self.character == ALL
+                            else tuple(c for c in cols if c != "char"))
         self.tree.delete(*self.tree.get_children())
         for r in self.runs:
-            date = datetime.fromtimestamp(r["start"]).strftime("%Y-%m-%d %H:%M") if r["start"] else "?"
+            date = datetime.fromtimestamp(r["start"]).strftime("%d %b %H:%M") if r["start"] else "?"
             char = r["character"] + (" (co-op)" if r["multiplayer"] else "")
+            res = {"WIN": "✔ Win", "LOSS": "✖ Loss", "ABANDONED": "– Quit"}[r["result"]]
             self.tree.insert("", "end", iid=r["file"], tags=(r["result"],),
-                             values=(date, char, r["ascension"], r["result"], r["final_floor"],
+                             values=(date, char, r["ascension"], res, r["final_floor"],
                                      "" if r["win"] else r["killer"]))
-        if keep and self.tree.exists(keep):
-            self._select_file(keep)
-        elif self.runs:
-            self._select_file(self.runs[0]["file"])
+        target = keep if keep and self.tree.exists(keep) else (self.runs[0]["file"] if self.runs else None)
+        if target:
+            self.tree.selection_set(target)
+            self.tree.see(target)
+            self.selected_file = target
+            self._render_autopsy(next((r for r in self.runs if r["file"] == target), None))
         else:
             self._render_autopsy(None)
 
-    def _select_file(self, fname):
-        if self.tree.exists(fname):
-            self.tree.selection_set(fname)
-            self.tree.see(fname)
-
     def _on_select(self, _evt=None):
         sel = self.tree.selection()
-        if not sel:
+        if not sel or sel[0] == self.selected_file and _evt is None:
             return
         self.selected_file = sel[0]
-        run = next((r for r in self.runs if r["file"] == sel[0]), None)
-        self._render_autopsy(run)
+        self._render_autopsy(next((r for r in self.runs if r["file"] == sel[0]), None))
 
     def _render_autopsy(self, r):
-        t = self.autopsy
+        t = self.autopsy_txt
         t.configure(state="normal")
         t.delete("1.0", "end")
         w = lambda s, *tags: t.insert("end", s, tags)
@@ -788,70 +1326,56 @@ class CoachApp(tk.Tk):
 
         res_tag = {"WIN": "good", "LOSS": "bad"}.get(r["result"], "dim")
         date = datetime.fromtimestamp(r["start"]).strftime("%a %d %b %Y, %H:%M") if r["start"] else "?"
-        w(f"{r['character']} - ", "h1"); w(f"{r['result']}\n", "h1", res_tag)
-        w(f"{date}  ·  Ascension {r['ascension']}  ·  {r['mode']}  ·  {r['run_time'] // 60}m "
-          f"{r['run_time'] % 60:02d}s  ·  floor {r['final_floor']}  ·  deck {r['deck_size']}  ·  "
-          f"{r['build']}  ·  {r['file']}\n", "dim")
+        w(f"{r['character']}  ", "h1"); w({"WIN": "Victory", "LOSS": "Defeat", "ABANDONED": "Abandoned"}[r["result"]] + "\n", "h1", res_tag)
+        w(f"{date}  ·  A{r['ascension']}  ·  {r['mode']}  ·  {r['run_time'] // 60}m {r['run_time'] % 60:02d}s  ·  "
+          f"floor {r['final_floor']}  ·  {r['deck_size']} cards  ·  {r['relic_count']} relics\n", "dim", "ui")
 
         w("Coach's callouts\n", "h2")
         icon = {"bad": "✖", "warn": "▲", "info": "•", "good": "✔"}
         for sev, text in autopsy_callouts(r):
-            w(f"{icon.get(sev, '•')}  ", sev); w(text + "\n", "callout")
+            w(f"{icon.get(sev, '•')}   ", sev, "callout"); w(text + "\n", "callout")
 
-        w("\nFloor-by-floor\n", "h2")
-        w(f"{'#':>3}  {'Room / Enemy':<34}{'Turns':>5}  {'HP change':<11}{'HP':>9}  {'Gold':>5} {'(±)':<9}\n", "dim")
-
+        w("\nFloor by floor\n", "h2")
+        w(f"{'#':>3}  {'Room / Enemy':<26}{'Turns':>5}  {'HP ±':<9}{'HP':>7}  {'Gold':>5} {'(±)':<8}\n", "faint")
         cur_act = None
         for f in r["floors"]:
             if f["act"] != cur_act:
                 cur_act = f["act"]
-                w(f"  Act {f['act']} - {pretty_act(f['act_id'])}  \n", "actbar")
-
+                w(f" Act {f['act']} · {pretty_act(f['act_id'])}\n", "actbar")
             rt = f["room_type"]
             row_tag = {"elite": "elite", "boss": "boss"}.get(rt, "combat" if f["is_combat"] else "")
-            label = f["label"][:33]
             w(f"{f['floor']:>3}  ", "floorhead")
-            w(f"{label:<34}", row_tag)
-            turns = f"{f['turns']}" if f["is_combat"] else "-"
+            w(f"{f['label'][:25]:<26}", row_tag)
             slow = f["is_combat"] and rt == "monster" and f["turns"] >= SLOW_FIGHT_TURNS
-            w(f"{turns:>5}", "bad" if slow else "")
-            hp_change = []
-            if f["damage"]:
-                hp_change.append(f"-{f['damage']}")
-            if f["healed"]:
-                hp_change.append(f"+{f['healed']}")
-            hpc = " ".join(hp_change) or "0"
+            w(f"{(str(f['turns']) if f['is_combat'] else '-'):>5}", "bad" if slow else "")
+            hpc = " ".join(x for x in (f"-{f['damage']}" if f["damage"] else "",
+                                       f"+{f['healed']}" if f["healed"] else "") if x) or "0"
             big = f["max_hp"] and f["damage"] >= BIG_HIT_FRACTION * f["max_hp"]
-            w(f"  {hpc:<11}", "bad" if big else "warn" if f["damage"] else "good" if f["healed"] else "dim")
+            w(f"  {hpc:<9}", "bad" if big else "warn" if f["damage"] else "good" if f["healed"] else "faint")
             hp = f"{f['hp']}/{f['max_hp']}" if f["hp"] is not None else "?"
-            w(f"{hp:>9}", "bad" if f["hp"] == 0 else "")
-            gdelta = []
-            if f["gold_gained"]:
-                gdelta.append(f"+{f['gold_gained']}")
-            if f["gold_spent"]:
-                gdelta.append(f"-{f['gold_spent']}")
-            if f["gold_lost"]:
-                gdelta.append(f"-{f['gold_lost']}!")
+            w(f"{hp:>7}", "bad" if f["hp"] == 0 else "")
+            gd = " ".join(x for x in (f"+{f['gold_gained']}" if f["gold_gained"] else "",
+                                      f"-{f['gold_spent']}" if f["gold_spent"] else "",
+                                      f"-{f['gold_lost']}!" if f["gold_lost"] else "") if x)
             w(f"  {f['gold'] if f['gold'] is not None else '?':>5} ")
-            w(f"{' '.join(gdelta):<9}\n", "dim")
+            w(f"{gd:<8}\n", "faint")
 
-            # Detail lines
             pad = "       "
             if f["card_choices"] and f["map_type"] == "shop":
                 gained = set(f["cards_other"]) | set(f["bought_cards"])
-                w(pad + "Shop stock: ", "dim")
+                w(pad + "Shop:  ", "faint", "detail")
                 for i, (name, picked) in enumerate(f["card_choices"]):
                     if i:
                         w("  ")
                     bought = picked or name in gained
-                    w(("$ " if bought else "") + name, "picked" if bought else "dim")
+                    w(("$ " if bought else "") + name, "picked" if bought else "faint", "detail")
                 w("\n")
             elif f["card_choices"]:
-                w(pad + "Cards: ", "dim")
+                w(pad + "Cards: ", "faint", "detail")
                 for i, (name, picked) in enumerate(f["card_choices"]):
                     if i:
                         w("  ")
-                    w(("✔ " if picked else "") + name, "picked" if picked else "skipped")
+                    w(("✔ " if picked else "") + name, "picked" if picked else "skipped", "detail")
                 if not any(p for _, p in f["card_choices"]):
                     w("   (skipped)", "warn")
                 w("\n")
@@ -869,24 +1393,23 @@ class CoachApp(tk.Tk):
                 extras.append(("Potion used: " + ", ".join(f["potions_used"]), "good"))
             if f["potions_discarded"]:
                 extras.append(("Discarded: " + ", ".join(f["potions_discarded"]), "warn"))
-            if f["potions_skipped"]:
-                extras.append(("Potion skipped: " + ", ".join(f["potions_skipped"]), "dim"))
             if f["events"]:
-                extras.append(("Event: " + "; ".join(f["events"]), ""))
+                extras.append(("Event: " + "; ".join(f["events"]), "dim"))
             if f["rest"]:
-                extras.append(("Campfire: " + ", ".join(f["rest"]), "warn" if "Smith" in f["rest"]
-                               and f["hp"] and f["max_hp"] and f["hp"] / f["max_hp"] < 0.5 else ""))
+                low = "Smith" in f["rest"] and f["hp"] and f["max_hp"] and f["hp"] / f["max_hp"] < 0.5
+                extras.append(("Campfire: " + ", ".join(f["rest"]) + ("  ← upgraded while low" if low else ""),
+                               "warn" if low else "dim"))
             if f["upgraded"]:
-                extras.append(("Upgraded: " + ", ".join(f["upgraded"]), "dim"))
+                extras.append(("Upgraded: " + ", ".join(f["upgraded"]), "faint"))
             if f["removed"]:
                 extras.append(("Removed: " + ", ".join(f["removed"]), "good"))
             if f["max_hp_delta"]:
                 extras.append((f"Max HP {f['max_hp_delta']:+d}", "good" if f["max_hp_delta"] > 0 else "bad"))
             for text, tag in extras:
-                w(pad + text + "\n", tag or "dim")
+                w(pad + text + "\n", tag, "detail")
 
         if not r["win"] and r["floors"]:
-            w("\n", "")
+            w("\n")
             w(f"  ☠  Run ended on floor {r['final_floor']}"
               + (f" to {r['killer']}" if r["killer"] else "")
               + f" with {r['final_gold']} gold"
