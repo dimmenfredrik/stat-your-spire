@@ -327,10 +327,10 @@ function autopsyHtml(r, file, tpOnly = false) {
     const gained = [...f.cards_other, ...f.bought_cards];
     gained.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">+ ${wikiA(n, artImg(n, 30) + esc(n))}</span>`));
     f.relics.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">◆ ${wikiA(n, artImg(n, 30) + esc(n))}</span>`));
-    f.potions_picked.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">⚗ ${esc(n)}</span>`));
-    f.potions_used.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-good/15 text-good">used ${esc(n)}</span>`));
-    f.potions_discarded.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">tossed ${esc(n)}</span>`));
-    f.events.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-card2 text-dim">${esc(n)}</span>`));
+    f.potions_picked.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">⚗ ${wikiA(n, artImg(n, 26) + esc(n))}</span>`));
+    f.potions_used.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-good/15 text-good">used ${wikiA(n, artImg(n, 26) + esc(n))}</span>`));
+    f.potions_discarded.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">tossed ${wikiA(n, artImg(n, 26) + esc(n))}</span>`));
+    f.events.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-card2 text-dim">${wikiA(n, artImg(n, 26) + esc(n))}</span>`));
     f.rest.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] ${f.smith_low ? "bg-warn/15 text-warn" : "bg-good/15 text-good"}">${esc(n)}</span>`));
     f.removed.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-good/15 text-good">removed ${esc(n)}</span>`));
     const tp = f.tp.map(b => pill(b.k, b.label)).join(" ");
