@@ -158,9 +158,22 @@ def render_splash(pck, tres_path):
     return im
 
 
+def render_enemy(pck, tres_path, size=200):
+    """A monster, cropped to its outline and kept small (it is shown in a ring about 56 px wide)."""
+    im = render_splash(pck, tres_path)
+    bb = im.getbbox() if im is not None else None
+    if not bb:
+        return None
+    im = im.crop(bb)
+    k = size / max(im.size)
+    return im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS)
+
+
 def make_image(pck, kind, p):
     if kind == "splash":
         return render_splash(pck, p)
+    if kind == "enemy":
+        return render_enemy(pck, p)
     return texture_for(pck, p)
 
 
@@ -271,6 +284,14 @@ def collect_jobs(pck):
         m = re.match(r"images/ui/run_history/([a-z_]+)_boss\.png\.import$", p)
         if m:
             jobs.append(("boss", p, "boss_" + m.group(1)))
+    mons = {}   # enemy pictures: one per monster folder, drawn from the game's own Spine files
+    for p in pck.ents:
+        m = re.match(r"animations/monsters/([a-z0-9_]+)/([a-z0-9_]*)skel_data\.tres$", p)
+        if m:
+            mons.setdefault(m.group(1), []).append(p)
+    for folder, paths in sorted(mons.items()):
+        paths.sort(key=lambda q: (os.path.basename(q) != folder + "_skel_data.tres", not os.path.basename(q).endswith("_front_skel_data.tres"), q))   # the main skeleton first
+        jobs.append(("enemy", paths[0], "enemy_" + folder))
     have = {j[2] for j in jobs}
     jobs += [j for j in beta_jobs if j[2] not in have]   # early-access placeholder art only where nothing better exists
     return jobs
@@ -315,7 +336,7 @@ def build_info(pck, cards):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     quiet = "--if-missing" in sys.argv
-    if quiet and os.path.isfile(os.path.join(ART, "descriptions.json")) and os.path.isfile(os.path.join(ART, "boss_kaiser_crab.webp")):
+    if quiet and os.path.isfile(os.path.join(ART, "descriptions.json")) and os.path.isfile(os.path.join(ART, "enemy_hunter_killer.webp")):
         return 0                                   # already built on this PC
     path = args[0] if args else find_pck()
     if not path:
