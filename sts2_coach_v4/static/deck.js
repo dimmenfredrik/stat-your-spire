@@ -18,6 +18,14 @@ function deckHtml(r) {
   const E = deckEntries(r), total = (r.deck || []).length;
   if (!total) return `<div class="text-sm text-faint">No deck information in this run file.</div>`;
   const hasMeta = E.some(e => e.cost !== null);
+  if (!hasMeta) {   // no card library available (browser version, or pictures not built yet): simple list
+    const up = E.reduce((a, e) => a + (e.u ? e.count : 0), 0);
+    const items = [...E].sort((a, b) => a.n.localeCompare(b.n)).map(e => `<span class="inline-flex items-center rounded-lg border border-line bg-card2 px-2.5 py-1 text-[13px] ${e.u ? "text-[#e8c766]" : "text-ink"}">${wikiA(e.n, esc(e.n) + (e.u ? "+" : ""))}${e.count > 1 ? `<span class="ml-1.5 text-faint">×${e.count}</span>` : ""}</span>`).join("");
+    return `<div class="mb-4 grid grid-cols-2 gap-2 max-w-xs">${[[total, "cards"], [up, "upgraded"]].map(([v, l]) => `<div class="rounded-lg bg-card2 px-3 py-2"><div class="num text-xl font-bold">${v}</div><div class="text-[11px] text-faint">${l}</div></div>`).join("")}</div>
+      <div class="flex flex-wrap gap-2">${items}</div>
+      <div class="mt-4 text-xs text-faint">Pictures, card type and cost are only in the downloadable version (they are built from your own game files).</div>
+      ${(r.relics_final || []).length ? `<div class="mt-5 mb-2 text-[11px] font-bold tracking-wider text-faint">RELICS · ${r.relics_final.length}</div><div class="flex flex-wrap gap-2">${r.relics_final.map(n => `<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[12px] bg-warn/15 text-warn">◆ ${wikiA(n, esc(n))}</span>`).join("")}</div>` : ""}`;
+  }
   const n = f => E.filter(f).reduce((a, e) => a + e.count, 0);
   const by = t => n(e => e.type === t);
   const upgraded = n(e => e.u > 0), basics = n(e => e.rarity === "Basic");
