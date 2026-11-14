@@ -833,6 +833,7 @@ class CoachApp(tk.Tk):
         self.current_build = ""
         self.expanded = set()          # habit ids whose WHAT TO DO is open
         self._auto_expand = True
+        self.min_picks = tk.IntVar(value=8)
 
         self._style()
         self._build()
@@ -1484,9 +1485,11 @@ class CoachApp(tk.Tk):
               + "   ".join(f"{pretty_act(k)} {v:.2f}" for k, v in
                           sorted(base.items(), key=lambda kv: ACT_ORDER.index(kv[0]) if kv[0] in ACT_ORDER else 99))
               + "\n", "faint", "ui")
+        self._winners_panel(runs, inc)
         if not rows:
             w(f"  No card has been offered {MIN_OFFERED}+ times with the current filters.\n", "dim")
             return
+        w("  Full table\n", "bold")
         hdr = (f"  {'Card':<22}{'Offered':>8}{'Pick%':>7}{'WR picked':>12}{'WR skipped':>12}{'Lift':>7}"
                f"{'Avg deck':>10}{'Tempo':>8}{'Removed':>9}   Flags\n")
         w(hdr, "faint")
@@ -1548,6 +1551,83 @@ class CoachApp(tk.Tk):
                 w(f"picked {x['pick_pct']:.0f}% of the time, but its lift ({x['delta']:+.0f}) is well below your "
                   f"typical card ({lb:+.0f}) - try skipping it unless it fills a clear need.\n", "ui")
         w("  Small samples - a card needs many offers before these numbers mean much.\n", "faint", "ui")
+
+    def _winners_panel(self, runs, inc):
+        """Top 5 run-winners / bottom 5 run-killers with a Min Picks slider, embedded in the Stats text."""
+        t = self.stats_txt
+        all_rows, _ = card_pick_impact(runs, inc, min_offered=1)
+        all_rows = [x for x in all_rows if x["delta"] is not None]
+
+        panel = tk.Frame(t, bg=CARD)
+        top = tk.Frame(panel, bg=CARD)
+        top.pack(fill="x", pady=(4, 8))
+        tk.Label(top, text="MIN PICKS", bg=CARD, fg=FAINT, font=(UI_FONT_SEMI, 8)).pack(side="left")
+        val_lbl = tk.Label(top, text="", bg=CARD, fg=ACCENT, font=(UI_FONT_SEMI, 10), width=3)
+        scale = tk.Scale(top, from_=3, to=25, orient="horizontal", variable=self.min_picks, showvalue=False,
+                         length=260, bg=ACCENT, fg=FG, troughcolor=BORDER, activebackground="#ffd08a",
+                         highlightthickness=0, borderwidth=0, sliderrelief="flat", sliderlength=16, width=10,
+                         cursor="hand2")
+        scale.pack(side="left", padx=(10, 6))
+        val_lbl.pack(side="left")
+        info = tk.Label(top, text="", bg=CARD, fg=FAINT, font=(UI_FONT, 9))
+        info.pack(side="left", padx=12)
+
+        cols = tk.Frame(panel, bg=CARD)
+        cols.pack(fill="x")
+        boxes = []
+        for title, color in (("TOP 5 RUN-WINNERS", GOOD), ("BOTTOM 5 RUN-KILLERS", BAD)):
+            box = tk.Frame(cols, bg=CARD_HI, padx=14, pady=10, width=500, height=188)
+            box.pack(side="left", padx=(0, 12), anchor="n")
+            box.pack_propagate(False)
+            tk.Label(box, text=title, bg=CARD_HI, fg=color, font=(UI_FONT_SEMI, 9)).pack(anchor="w", pady=(0, 6))
+            body = tk.Frame(box, bg=CARD_HI)
+            body.pack(fill="both", expand=True)
+            boxes.append((body, color))
+
+        def fill(body, items, color, empty):
+            for c in body.winfo_children():
+                c.destroy()
+            if not items:
+                tk.Label(body, text=empty, bg=CARD_HI, fg=FAINT, font=(UI_FONT, 9),
+                         justify="left").grid(row=0, column=0, sticky="w")
+                return
+            for i, x in enumerate(items):
+                tk.Label(body, text=f"{i + 1}", bg=CARD_HI, fg=FAINT, font=(UI_FONT_SEMI, 10),
+                         width=2, anchor="w").grid(row=i, column=0, sticky="w")
+                tk.Label(body, text=x["card"], bg=CARD_HI, fg=FG, font=(UI_FONT_SEMI, 10),
+                         anchor="w", width=19).grid(row=i, column=1, sticky="w")
+                tk.Label(body, text=f"{x['delta']:+.0f}", bg=CARD_HI, fg=color, font=(UI_FONT_SEMI, 11),
+                         width=5, anchor="e").grid(row=i, column=2, sticky="e")
+                tk.Label(body, text=f"  {x['wr_p']:.0f}% vs {x['wr_s']:.0f}%  ·  {x['np']} picks",
+                         bg=CARD_HI, fg=DIM, font=(UI_FONT, 9), anchor="w").grid(row=i, column=3, sticky="w", pady=2)
+
+        def update(_v=None):
+            n = self.min_picks.get()
+            val_lbl.configure(text=str(n))
+            ok = [x for x in all_rows if x["np"] >= n and x["ns"] >= 1]
+            best = sorted(ok, key=lambda x: (-x["delta"], -x["np"]))[:5]
+            names = {x["card"] for x in best}
+            worst = [x for x in sorted(ok, key=lambda x: (x["delta"], -x["np"])) if x["card"] not in names][:5]
+            info.configure(text=f"{len(ok)} cards picked in {n}+ finished runs  ·  "
+                                f"lift = win rate when picked vs when skipped")
+            empty = f"No cards picked in {n}+ finished runs.\nLower Min Picks or widen the filters."
+            fill(boxes[0][0], best, GOOD, empty)
+            fill(boxes[1][0], worst, BAD, empty if not ok else "Not enough other cards qualify.")
+
+        def on_change(*_):
+            if panel.winfo_exists():
+                update()
+        old = getattr(self, "_min_picks_trace", None)
+        if old:
+            try:
+                self.min_picks.trace_remove("write", old)
+            except tk.TclError:
+                pass
+        self._min_picks_trace = self.min_picks.trace_add("write", on_change)
+        update()
+        t.insert("end", "  ")
+        t.window_create("end", window=panel)
+        t.insert("end", "\n\n")
 
     # ----- Autopsy view --------------------------------------------------
     def _render_list(self):
