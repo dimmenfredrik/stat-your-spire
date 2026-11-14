@@ -267,10 +267,10 @@ def collect_jobs(pck):
         m = re.match(r"images/packed/character_select/char_select_([a-z]+)\.png\.import$", p)
         if m and m.group(1) not in ("random", "rotating", "player_icon", "lock3", "outline", "button_mask"):
             jobs.append(("char", p, "char_portrait_" + m.group(1)))
-    for p in pck.ents:   # the big character-select scenes
-        m = re.match(r"animations/character_select/([a-z]+)/[a-z_]*skel_data\.tres$", p)
+    for p in pck.ents:   # boss pictures (run-history icons), picked by boss name in the page
+        m = re.match(r"images/ui/run_history/([a-z_]+)_boss\.png\.import$", p)
         if m:
-            jobs.append(("splash", p, "char_splash_" + m.group(1)))
+            jobs.append(("boss", p, "boss_" + m.group(1)))
     have = {j[2] for j in jobs}
     jobs += [j for j in beta_jobs if j[2] not in have]   # early-access placeholder art only where nothing better exists
     return jobs
@@ -315,7 +315,7 @@ def build_info(pck, cards):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     quiet = "--if-missing" in sys.argv
-    if quiet and os.path.isfile(os.path.join(ART, "descriptions.json")) and os.path.isfile(os.path.join(ART, "char_splash_ironclad.webp")):
+    if quiet and os.path.isfile(os.path.join(ART, "descriptions.json")) and os.path.isfile(os.path.join(ART, "boss_kaiser_crab.webp")):
         return 0                                   # already built on this PC
     path = args[0] if args else find_pck()
     if not path:

@@ -18,6 +18,8 @@ let D = null, busy = false, again = false, charts = {}, INIT = null;
 // character pictures (built from the player's own game files; absent -> the coloured dot is used)
 const charKey = n => String(n || "").toLowerCase().replace(/[^a-z]+/g, "");
 const charArt = (n, kind) => { const f = ART.get("char_" + kind + "_" + charKey(n)); return f ? `/art/${encodeURIComponent(f)}` : ""; };
+/* icon sitting in a glowing ring in colour c (used by the character banner and the boss cards) */
+const halo = (url, ring, img, c) => `<span class="relative grid shrink-0 place-items-center" style="width:${ring}px;height:${ring}px;--h:${c}"><span class="absolute inset-0 rounded-full" style="border:2px solid color-mix(in srgb,var(--h) 60%,transparent);box-shadow:0 0 ${Math.round(ring / 3)}px color-mix(in srgb,var(--h) 50%,transparent),inset 0 0 ${Math.round(ring / 4)}px color-mix(in srgb,var(--h) 30%,transparent);background:radial-gradient(circle,color-mix(in srgb,var(--h) 22%,#14171d),transparent 75%)"></span><img src="${url}" alt="" style="height:${img}px;width:${img}px;filter:drop-shadow(0 4px 8px rgba(0,0,0,.6))" class="relative object-contain"></span>`;
 const charIcon = (n, px) => { const u = charArt(n, "icon"); return u ? `<img src="${u}" alt="" style="height:${px}px;width:${px}px" class="object-contain drop-shadow">` : ""; };
 function themeColor(name) {
   if (!name || name === ALL) return "#7d93b5";
@@ -53,6 +55,14 @@ const wikiA = (n, inner) => `<a data-tip="${esc(wikiName(n))}" href="${wikiUrl(w
 const wikiMulti = label => String(label).split(" / ").map(x => wikiA(x, `${artImg(wikiName(x), 36)}${esc(x)}`)).join(' <span class="text-faint">/</span> ');
 let ART = new Map();
 const artKey = n => String(n).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+/* boss picture for a boss name (picked from whichever boss_* pictures exist, so every boss works) */
+const bossArt = n => {
+  const strip = x => x.replace(/^the_/, "");
+  const s = strip(artKey(String(n).replace(/\s*\((elite|weak|boss)\)\s*$/i, "")));
+  let best = "";
+  ART.forEach((f, k) => { if (!k.startsWith("boss_")) return; const b = strip(k.slice(5)); if (b === s || (b.length >= 4 && s.length >= 4 && (s.includes(b) || b.includes(s)))) { if (!best || b === s) best = f; } });
+  return best ? `/art/${encodeURIComponent(best)}` : "";
+};
 const artImg = (n, px = 24) => { const f = ART.get(artKey(n)); return f ? `<img src="/art/${encodeURIComponent(f)}" alt="" style="height:${px}px;width:auto;max-width:${Math.round(px * 1.5)}px" data-art="/art/${encodeURIComponent(f)}" class="artthumb inline-block rounded-md object-contain align-middle mr-2 cursor-zoom-in">` : ""; };
 let INFO = {};
 async function loadArt() { try { INFO = await (await fetch("/art-info")).json(); } catch (e) { INFO = {}; } await loadArtFiles(); }
@@ -105,14 +115,12 @@ function renderBanner() {
   const chars = D.sidebar.filter(e => e.name !== ALL && charArt(e.name, "icon"));
   $("#bannerIcon").innerHTML = S.character !== ALL ? (charArt(S.character, "icon") ? charIcon(S.character, 52) : dot)
     : (chars.length ? `<span class="flex gap-1">${chars.map(e => charIcon(e.name, 32)).join("")}</span>` : dot);
-  const splash = S.character !== ALL ? charArt(S.character, "splash") : "";
-  const por = S.character !== ALL && !splash ? charArt(S.character, "portrait") : "";
+  const ic = S.character !== ALL ? charArt(S.character, "icon") : "";
   const ba = $("#bannerArt");
-  ba.classList.toggle("hidden", !splash && !por);
-  ba.className = "pointer-events-none absolute " + (splash ? "inset-y-0 right-0 w-[66%]" : "inset-y-3 right-3 aspect-[132/196]") + (splash || por ? "" : " hidden");
-  const fade = "-webkit-mask-image:linear-gradient(90deg,transparent,#000 60%);mask-image:linear-gradient(90deg,transparent,#000 60%);object-position:50% 18%";
-  ba.innerHTML = splash ? `<img src="${splash}" alt="" style="${fade}" class="h-full w-full object-cover">`
-    : por ? `<img src="${por}" alt="" class="h-full w-full rounded-xl object-cover ring-1 ring-white/15 shadow-lg">` : "";
+  ba.className = "pointer-events-none absolute inset-0" + (ic ? "" : " hidden");
+  ba.innerHTML = ic ? `<div class="absolute inset-0" style="background:radial-gradient(circle at 88% 50%,color-mix(in srgb,var(--accent) 45%,transparent),transparent 52%)"></div>
+    <img src="${ic}" alt="" class="absolute" style="right:-30px;top:-40px;height:260px;opacity:.09;filter:grayscale(1) brightness(2)">
+    <div class="absolute inset-y-0 flex items-center" style="right:48px">${halo(ic, 122, 98, "var(--accent)")}</div>` : "";
 }
 function renderTabs() {
   const tabs = [["focus", "Focus"], ["dash", "Dashboard"], ["habits", "Habits"], ["cards", "Cards"]];
