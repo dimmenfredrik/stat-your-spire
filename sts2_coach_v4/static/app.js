@@ -11,7 +11,7 @@ async function api(name, ...args) {
   const r = await fetch("/api/" + name, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(args)});
   return r.json();
 }
-const S = {character: ALL, asc: "All", range: "All runs", quits: false, coop: true, auto: true, tab: "focus",
+const S = {character: ALL, asc: "All", range: "All runs", quits: false, coop: true, multi: false, second: false, auto: true, tab: "focus",
            feedN: 12, open: new Set(), sort: {key: "lift", desc: true}, search: "", expandedHabits: new Set()};
 let D = null, busy = false, again = false, charts = {}, INIT = null;
 
@@ -112,7 +112,7 @@ async function loadArtFiles() { try { const r = await fetch("/art-list"); const 
 
 /* ================================================================= data */
 function params() {
-  return {character: S.character, asc: S.asc, range: S.range, include_abandoned: S.quits, include_multi: S.coop,
+  return {character: S.character, asc: S.asc, range: S.range, include_abandoned: S.quits, include_multi: S.coop, only_multi: S.multi,
           biome: "All acts", min_picks: 8, killer: null};
 }
 async function refresh() {
@@ -162,14 +162,15 @@ function renderBanner() {
   ba.innerHTML = "";
 }
 function renderTabs() {
-  const tabs = [["focus", "Focus"], ["dash", "Dashboard"], ["habits", "Habits"], ["cards", "Cards"], ["builds", "Best builds"]];
+  const tabs = [["focus", "Focus"], ["dash", "Dashboard"], ["enemies", "Enemies"], ["cards", "Cards"], ["builds", "Best builds"]];
   $("#tabs").innerHTML = tabs.map(([k, l]) => `<button data-tab="${k}" class="relative py-3 text-[15px] font-semibold transition ${S.tab === k ? "text-ink" : "text-dim hover:text-ink"}">${l}
     ${S.tab === k ? `<span class="absolute inset-x-0 -bottom-px h-[3px] rounded-t bg-[var(--accent)]"></span>` : ""}</button>`).join("");
 }
 function renderView() {
   Object.values(charts).forEach(c => c.destroy()); charts = {};
   const v = $("#view");
-  v.innerHTML = `<div class="fade">${S.tab === "focus" ? viewFocus() : S.tab === "dash" ? viewDash() : S.tab === "habits" ? viewHabits() + viewDanger() : S.tab === "builds" ? viewBuilds() : viewCards()}</div>`;
+  v.innerHTML = `<div class="fade">${S.tab === "focus" ? viewFocus() : S.tab === "dash" ? viewDash() : S.tab === "enemies" ? viewEnemies() : S.tab === "builds" ? viewBuilds() : viewCards()}</div>`;
+  renderSecond();
   if (S.tab === "dash") for (const f of S.open) openRunBody(f, true);
 }
 
@@ -450,6 +451,8 @@ document.addEventListener("input", e => { if (e.target.id === "cardSearch") { S.
 $("#asc").addEventListener("change", e => { S.asc = e.target.value; refresh(); });
 $("#optQuits").addEventListener("change", e => { S.quits = e.target.checked; refresh(); });
 $("#optCoop").addEventListener("change", e => { S.coop = e.target.checked; refresh(); });
+$("#optMulti").addEventListener("change", e => { S.multi = e.target.checked; refresh(); });
+$("#optSecond").addEventListener("change", e => { S.second = e.target.checked; renderSecond(); });
 $("#optAuto").addEventListener("change", e => { S.auto = e.target.checked; });
 $("#reloadBtn").addEventListener("click", async () => { await api("reload"); refresh(); });
 $("#folderBtn").addEventListener("click", () => { $("#mPath").value = (D && D.status.history_dir) || ""; $("#mErr").textContent = ""; $("#modal").classList.remove("hidden"); $("#mPath").focus(); });
@@ -479,7 +482,7 @@ async function pollLoop() {
   $("#view").innerHTML = `<div class="grid gap-4"><div class="skel h-44"></div><div class="grid grid-cols-3 gap-4"><div class="skel h-72"></div><div class="skel h-72 col-span-2"></div></div></div>`;
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.get("char")) S.character = h.get("char");
-  if (h.get("tab")) S.tab = h.get("tab");
+  if (h.get("tab")) S.tab = h.get("tab") === "habits" ? "enemies" : h.get("tab");
   if (h.get("open")) { S.open.add(h.get("open")); S.feedN = 60; }
   await loadArt();
   INIT = await api("init");

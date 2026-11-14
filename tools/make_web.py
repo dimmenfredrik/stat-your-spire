@@ -15,7 +15,7 @@ if os.path.isdir(out):
     shutil.rmtree(out)
 os.makedirs(os.path.join(out, "static")); os.makedirs(os.path.join(out, "py"))
 
-for name in ("style.css", "deck.js", "focus.js", "builds.js"):
+for name in ("style.css", "deck.js", "focus.js", "builds.js", "enemies.js"):
     shutil.copy(os.path.join(src, "static", name), os.path.join(out, "static", name))
 shutil.copy(os.path.join(here, "web", "web.js"), os.path.join(out, "static", "web.js"))
 shutil.copy(os.path.join(here, "web", "preview.webp"), os.path.join(out, "static", "preview.webp"))

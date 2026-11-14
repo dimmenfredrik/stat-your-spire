@@ -759,28 +759,32 @@ def gameplan_fixes(runs, include_abandoned, n_last=5):
                                      f"(avg {avg([r['final_gold'] for r in bad]):.0f})."),
              target=f"Arrive at every boss and elite with ≤{GOLD_LEAK_THRESHOLD} gold: removal first, then one key card/relic.",
              why=lambda r, v: "Won the run" if r["win"] else (f"Died with {r['final_gold']} gold (goal: {GOLD_LEAK_THRESHOLD} or less)" if not v else f"Died with only {r['final_gold']} gold"),
-             ok_word="spent gold well", scope="losses"),
+             ok_word="spent gold well", scope="losses",
+             split=lambda r: r["final_gold"] <= GOLD_LEAK_THRESHOLD, split_words=("spent it", f"hoarded {GOLD_LEAK_THRESHOLD}+")),
         dict(id="potions", title="Drink your potions",
              check=lambda r: True if r["win"] else not r["unused_potions"],
              detail=lambda bad, rs: (f"Died holding potions in {len(bad)}/{len(rs)} losses "
                                      f"({', '.join(sorted({p for r in bad for p in r['unused_potions']})[:3])})."),
              target="Use a potion the moment a fight will cost 40%+ HP - never die with a full belt.",
              why=lambda r, v: "Won the run" if r["win"] else (f"Died holding {len(r['unused_potions'])} potion{'s' if len(r['unused_potions']) != 1 else ''}" if not v else "Used every potion"),
-             ok_word="used their potions", scope="losses"),
+             ok_word="used their potions", scope="losses",
+             split=lambda r: not r["unused_potions"], split_words=("used them", "kept potions unused")),
         dict(id="slow_a1", title="Kill Act 1 hallways faster",
              check=lambda r: None if a1_avg(r) is None else a1_avg(r) <= SLOW_A1_GAMEPLAN,
              detail=lambda bad, rs: (f"{len(bad)}/{len(rs)} runs averaged >{SLOW_A1_GAMEPLAN} turns per Act 1 "
                                      f"hallway fight (worst {max(a1_avg(r) for r in bad):.1f})."),
              target=f"Take frontloaded damage with your first 3 card rewards; aim for ≤{SLOW_A1_GAMEPLAN} turns per hallway.",
              why=lambda r, v: (f"Act 1 hallway fights took {a1_avg(r):.1f} turns on average (goal: {SLOW_A1_GAMEPLAN} or less)" if a1_avg(r) is not None else ""),
-             ok_word="had fast Act 1 fights", scope="runs"),
+             ok_word="had fast Act 1 fights", scope="runs",
+             split=lambda r: None if a1_avg(r) is None else a1_avg(r) <= SLOW_A1_GAMEPLAN, split_words=("fast Act 1", "slow Act 1")),
         dict(id="a2_skip", title="Skip more in Act 2",
              check=lambda r: (None if _act2_rewards(r)[0] < 3 else _act2_rewards(r)[1] >= 1),
              detail=lambda bad, rs: (f"Took a card from every Act 2 reward in {len(bad)}/{len(rs)} runs "
                                      f"that saw 3+ Act 2 rewards."),
              target="In Act 2, skip at least 1-2 rewards that don't add AoE, scaling or block.",
              why=lambda r, v: ("Skipped at least one Act 2 card reward" if v else "Took a card from every Act 2 reward"),
-             ok_word="skipped in Act 2", scope="runs"),
+             ok_word="skipped in Act 2", scope="runs",
+             split=lambda r: (None if _act2_rewards(r)[0] < 3 else _act2_rewards(r)[1] >= 1), split_words=("skipped", "took every card")),
         dict(id="lowhp", title="Don't enter fights low",
              check=lambda r: (True if r["win"] else (None if _fatal_entry_hp(r) is None else _fatal_entry_hp(r) >= 0.5)),
              detail=lambda bad, rs: (f"Entered the fight that killed you below 50% HP in {len(bad)}/{len(rs)} losses."),
@@ -810,8 +814,18 @@ def gameplan_fixes(runs, include_abandoned, n_last=5):
             except Exception:
                 b["why"] = ""
             runs_n.append(b)
+        # win rate of ALL finished runs (wins and losses) with vs without the habit - for the "one job" banner
+        split = None
+        if c.get("split"):
+            sv = [(r, c["split"](r)) for r in decided]
+            okr = [r for r, v in sv if v is True]
+            bdr = [r for r, v in sv if v is False]
+            if len(okr) >= 4 and len(bdr) >= 4:
+                split = {"ok_n": len(okr), "ok_w": sum(1 for r in okr if r["win"]), "ok_wr": round(pct(sum(1 for r in okr if r["win"]), len(okr))),
+                         "bad_n": len(bdr), "bad_w": sum(1 for r in bdr if r["win"]), "bad_wr": round(pct(sum(1 for r in bdr if r["win"]), len(bdr))),
+                         "ok_word": c["split_words"][0], "bad_word": c["split_words"][1]}
         out.append(dict(id=c["id"], title=c["title"], rate=rate, detail=c["detail"](bad, [r for r, _ in rel]),
-                        target=c["target"], last5=last5, ok_word=c["ok_word"], last_runs=runs_n[:n_last]))
+                        target=c["target"], last5=last5, ok_word=c["ok_word"], last_runs=runs_n[:n_last], split=split))
     out.sort(key=lambda x: -x["rate"])
     return out[:2], len(decided)
 
@@ -1157,6 +1171,80 @@ def danger_list(runs, inc, limit=10):
                     "pct": round(avg_dmg / avg_max * 100) if avg_max else 0})
     out.sort(key=lambda x: (-x["deaths"], -x["pct"], -x["n"]))
     return out[:limit]
+
+ENEMY_BIG_PCT = 40        # an enemy that costs you this % of max HP on average "takes too much damage"
+ENEMY_LOW_ENTRY = 0.6     # going in below this share of max HP counts as "went in low"
+ENEMY_MIN_DEATHS = 3      # a problem is only called "usual" after this many deaths to the enemy
+ENEMY_TRY = {
+    "dmg": "Block earlier in the fight and keep a block potion for it.",
+    "dmg_elite": "It is optional: only fight it when you are healthy, otherwise path around it.",
+    "low": "Rest at the campfire before this fight instead of walking in hurt.",
+    "drag": "Take damage cards before this act and drink damage potions early.",
+    "potions": "Drink your potions the moment this fight turns bad.",
+}
+
+
+def enemies_list(runs, inc, limit=24):
+    """Every boss/elite/hallway fight that cost you HP or ended a run, with the problem that usually shows up.
+    Uses only what the run files record: HP lost, HP going in, fight length and unused potions."""
+    stats = {}
+    for r in runs:
+        for i, f in enumerate(r["floors"]):
+            if not f["is_combat"] or not f["encounter"]:
+                continue
+            e = stats.setdefault(f["encounter"], {"name": f["label"], "kind": f["room_type"], "foe": "", "meets": []})
+            if not e["foe"] and f.get("monster_ids"):
+                e["foe"] = f["monster_ids"][0].split(".")[-1].lower()
+            prev = r["floors"][i - 1] if i > 0 else None
+            entry = (prev["hp"] / prev["max_hp"]) if prev and prev.get("hp") is not None and prev.get("max_hp") else None
+            died = is_loss(r, inc) and i == len(r["floors"]) - 1 and r.get("killer_id") == f["encounter"]
+            e["meets"].append({"dmg": f["damage"], "turns": f["turns"], "max_hp": f["max_hp"], "entry": entry,
+                               "died": died, "potions": bool(r["unused_potions"])})
+    out = []
+    for enc, e in stats.items():
+        m = e["meets"]
+        n = len(m)
+        dead = [x for x in m if x["died"]]
+        deaths = len(dead)
+        if n < 2 and deaths < 1:
+            continue
+        avg_dmg = sum(x["dmg"] for x in m) / n
+        mx = [x["max_hp"] for x in m if x["max_hp"]]
+        pct_hp = round(avg_dmg / (sum(mx) / len(mx)) * 100) if mx else 0
+        probs, tries = [], []
+        if pct_hp >= ENEMY_BIG_PCT:
+            probs.append({"k": "dmg", "label": "Took too much damage",
+                          "detail": f"You lose {round(avg_dmg)} HP on average ({pct_hp}% of your max)."})
+            tries.append(ENEMY_TRY["dmg_elite" if e["kind"] == "elite" else "dmg"])
+        if deaths >= ENEMY_MIN_DEATHS:
+            low = [x for x in dead if x["entry"] is not None and x["entry"] < ENEMY_LOW_ENTRY]
+            known = [x for x in dead if x["entry"] is not None]
+            if known and len(low) / len(known) >= 0.5:
+                probs.append({"k": "low", "label": f"Went in below {round(ENEMY_LOW_ENTRY * 100)}% HP",
+                              "detail": f"In {len(low)} of {len(known)} deaths you entered the fight hurt."})
+                tries.append(ENEMY_TRY["low"])
+            ok = [x for x in m if not x["died"] and x["turns"]]
+            if ok and all(x["turns"] for x in dead):
+                t_d = sum(x["turns"] for x in dead) / deaths
+                t_o = sum(x["turns"] for x in ok) / len(ok)
+                if t_d >= t_o + 2:
+                    probs.append({"k": "drag", "label": "Fight drags on",
+                                  "detail": f"Fights that end your run last {t_d:.0f} turns, the ones you survive {t_o:.0f}."})
+                    tries.append(ENEMY_TRY["drag"])
+            pot = [x for x in dead if x["potions"]]
+            if len(pot) / deaths >= 0.5:
+                probs.append({"k": "potions", "label": "Died holding potions",
+                              "detail": f"In {len(pot)} of {deaths} deaths you still had a potion."})
+                tries.append(ENEMY_TRY["potions"])
+        good = deaths == 0 and n >= 5 and pct_hp < 20
+        if not probs and deaths == 0 and not good:
+            continue
+        out.append({"name": e["name"], "kind": e["kind"], "foe": e["foe"], "n": n, "deaths": deaths, "survived": n - deaths,
+                    "avg_dmg": round(avg_dmg), "pct": pct_hp, "worst": max(x["dmg"] for x in m),
+                    "problems": probs, "tries": tries, "good": good})
+    out.sort(key=lambda x: (x["good"], -x["deaths"], -x["pct"], -x["n"]))
+    return out[:limit]
+
 
 def _end_foe(r):
     """The last combat of a run: the fight that killed you, or the final boss you beat (for the pictures)."""
@@ -1633,8 +1721,10 @@ class CoachAPI:
                 changed = True
         return changed
 
-    def _all_runs(self, include_multi):
+    def _all_runs(self, include_multi, only_multi=False):
         runs = [r for _, r in self._cache.values() if r and r["floors"]]
+        if only_multi:
+            return [r for r in runs if r["multiplayer"]]
         if not include_multi:
             runs = [r for r in runs if not r["multiplayer"]]
         return runs
@@ -1733,7 +1823,7 @@ class CoachAPI:
         min_picks = int(p.get("min_picks", 8))
         killer = p.get("killer") or None
 
-        all_runs = self._all_runs(include_multi)
+        all_runs = self._all_runs(include_multi, bool(p.get("only_multi", False)))
         newest = max(all_runs, key=lambda r: r["start"], default=None)
         current_build = newest["build"] if newest else ""
         if character != ALL and not any(r["character"] == character for r in all_runs):
@@ -1802,6 +1892,7 @@ class CoachAPI:
         # --- habits + gameplan ---
         out["habits"] = self._habits(runs, inc, character, asc, rng)
         out["danger"] = danger_list(runs, inc)
+        out["enemies"] = enemies_list(runs, inc)
         out["builds"] = best_builds(scope(all_runs), inc)
 
         # --- stats ---
@@ -1975,7 +2066,7 @@ class CoachAPI:
                 p = p or {}
                 self._ensure_loaded()
                 inc = bool(p.get("include_abandoned", False))
-                all_runs = self._all_runs(bool(p.get("include_multi", True)))
+                all_runs = self._all_runs(bool(p.get("include_multi", True)), bool(p.get("only_multi", False)))
                 newest = max(all_runs, key=lambda r: r["start"], default=None)
                 cb = newest["build"] if newest else ""
                 character = p.get("character", ALL)
