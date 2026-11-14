@@ -1895,13 +1895,11 @@ def run_server(api, port=8765):
                     names = sorted(n for n in os.listdir(art_dir) if n.lower().endswith((".png", ".webp", ".jpg", ".jpeg", ".gif", ".svg")))
                 self._send(200, json.dumps(names).encode("utf-8"), "application/json")
             elif path == "/art-info":
-                info = {}
                 try:
-                    with open(os.path.join(HERE, "art", "descriptions.json"), encoding="utf-8") as fh:
-                        info = json.load(fh)
-                except Exception:
-                    pass
-                self._send(200, json.dumps(info).encode("utf-8"), "application/json")
+                    with open(os.path.join(HERE, "art", "descriptions.json"), "rb") as fh:
+                        self._send(200, fh.read(), "application/json")
+                except OSError:
+                    self._send(200, b"{}", "application/json")
             elif path.startswith("/art/"):
                 from urllib.parse import unquote
                 name = os.path.basename(unquote(path[5:]))

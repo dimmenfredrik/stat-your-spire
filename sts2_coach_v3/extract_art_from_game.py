@@ -137,7 +137,16 @@ def save(img, key):
     img.save(os.path.join(ART, key + ".webp"), "WEBP", quality=88)
 
 
-def clean(t):
+def resolve_upgrade(t, upgraded):
+    """{IfUpgraded:show:A|B} -> A when upgraded else B ({IfUpgraded:show:A} -> A or nothing)."""
+    def f(m):
+        a, b = m.group(1), m.group(2) or ""
+        return a if upgraded else b
+    return re.sub(r"\{IfUpgraded:show:([^{}|]*)(?:\|([^{}]*))?\}", f, t)
+
+
+def clean(t, upgraded=False):
+    t = resolve_upgrade(t, upgraded)
     t = re.sub(r"\[/?[a-z_ =#0-9]+\]", "", t)
     t = re.sub(r"\{[^{}]*energy[^{}]*\}", "Energy", t, flags=re.I)
     t = re.sub(r"\{[^{}:]*:plural:([^{}|]*)\|([^{}]*)\}", r"\2", t)
@@ -198,7 +207,12 @@ def main():
         for k, v in data.items():
             m = re.match(r"^([A-Z0-9_]+)\.description$", k) or re.match(r"^([A-Z0-9_]+)\.pages\.INITIAL\.description$", k)
             if m and v and (name != "events" or "pages.INITIAL" in k):
-                info.setdefault(m.group(1).lower(), {"text": clean(v)[:400]})
+                entry = {"text": clean(v)[:400]}
+                if name == "cards" and "IfUpgraded" in v:
+                    up = clean(v, True)[:400]
+                    if up != entry["text"]:
+                        entry["up"] = up
+                info.setdefault(m.group(1).lower(), entry)
     with open(os.path.join(ART, "descriptions.json"), "w", encoding="utf-8") as fh:
         json.dump(info, fh, ensure_ascii=False, indent=1)
     print(f"descriptions written: {len(info)}")

@@ -113,7 +113,7 @@
     </div>
   </div>
 </div>
-<div id="artPrev" class="hidden fixed z-[60] pointer-events-none w-[290px] rounded-xl border border-line bg-card p-3 shadow-2xl"><img alt="" class="hidden w-full max-h-[320px] object-contain rounded-lg mb-2"><div id="apT" class="font-bold"></div><div id="apD" class="mt-1 text-sm text-dim leading-snug"></div></div>
+<div id="artPrev" class="hidden fixed z-[60] pointer-events-none w-[290px] rounded-xl border border-line bg-card p-3 shadow-2xl"><img alt="" class="hidden w-full max-h-[320px] object-contain rounded-lg mb-2"><div id="apT" class="font-bold text-base"></div><div id="apD" class="mt-1 text-[15px] text-ink leading-snug"></div><div id="apH" class="mt-2 pt-2 border-t border-line text-xs text-faint"></div></div>
 <div id="toast" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2"></div>
 
 <script>
@@ -164,7 +164,7 @@ const ico = (k, px = 14) => `<svg width="${px}" height="${px}" viewBox="0 0 24 2
 const WIKI = "https://slaythespire.wiki.gg/wiki/Special:Search?go=Go&search=";
 const wikiUrl = n => WIKI + encodeURIComponent("Slay the Spire 2:" + n);
 const wikiName = n => String(n).replace(/\s*\((elite|weak|boss)\)\s*$/i, "").split(":")[0].trim();
-const wikiA = (n, inner) => `<a data-tip="${esc(wikiName(n))}" href="${wikiUrl(wikiName(n))}" target="_blank" rel="noopener" title="Open &quot;${esc(wikiName(n))}&quot; on the Slay the Spire wiki" class="underline decoration-dotted decoration-white/25 underline-offset-[3px] hover:text-[var(--accent)] hover:decoration-[var(--accent)]">${inner ?? esc(n)}</a>`;
+const wikiA = (n, inner) => `<a data-tip="${esc(wikiName(n))}" href="${wikiUrl(wikiName(n))}" target="_blank" rel="noopener" class="underline decoration-dotted decoration-white/25 underline-offset-[3px] hover:text-[var(--accent)] hover:decoration-[var(--accent)]">${inner ?? esc(n)}</a>`;
 const wikiMulti = label => String(label).split(" / ").map(x => wikiA(x, `${artImg(wikiName(x), 36)}${esc(x)}`)).join(' <span class="text-faint">/</span> ');
 let ART = new Map();
 const artKey = n => String(n).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
@@ -327,10 +327,10 @@ function autopsyHtml(r, file, tpOnly = false) {
     const gained = [...f.cards_other, ...f.bought_cards];
     gained.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">+ ${wikiA(n, artImg(n, 30) + esc(n))}</span>`));
     f.relics.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">◆ ${wikiA(n, artImg(n, 30) + esc(n))}</span>`));
-    f.potions_picked.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">⚗ ${wikiA(n, artImg(n, 26) + esc(n))}</span>`));
-    f.potions_used.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-good/15 text-good">used ${wikiA(n, artImg(n, 26) + esc(n))}</span>`));
-    f.potions_discarded.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">tossed ${wikiA(n, artImg(n, 26) + esc(n))}</span>`));
-    f.events.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-card2 text-dim">${wikiA(n, artImg(n, 26) + esc(n))}</span>`));
+    f.potions_picked.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-info/15 text-info">⚗ ${esc(n)}</span>`));
+    f.potions_used.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-good/15 text-good">used ${esc(n)}</span>`));
+    f.potions_discarded.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-warn/15 text-warn">tossed ${esc(n)}</span>`));
+    f.events.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-card2 text-dim">${esc(n)}</span>`));
     f.rest.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] ${f.smith_low ? "bg-warn/15 text-warn" : "bg-good/15 text-good"}">${esc(n)}</span>`));
     f.removed.forEach(n => chips.push(`<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11.5px] bg-good/15 text-good">removed ${esc(n)}</span>`));
     const tp = f.tp.map(b => pill(b.k, b.label)).join(" ");
@@ -442,16 +442,28 @@ document.addEventListener("click", e => {
 });
 const artPrev = $("#artPrev");
 let tipFor = null;
-function showTip(el) {
+let upView = false;
+function showTip(el, quiet) {
   const name = el.dataset.tip, k = artKey(name), file = ART.get(k), info = INFO[k];
-  const text = info && (info.text || info);
+  const text = info && (info.text || (typeof info === "string" ? info : ""));
   if (!file && !text) return;
   tipFor = el;
+  const canUp = !!(info && info.up);
+  const up = upView && !!text;
   const img = artPrev.querySelector("img");
   if (file) { img.src = "/art/" + encodeURIComponent(file); img.classList.remove("hidden"); } else img.classList.add("hidden");
-  $("#apT").textContent = name; $("#apD").textContent = typeof text === "string" ? text : "";
-  artPrev.classList.remove("hidden", "pop"); void artPrev.offsetWidth; artPrev.classList.add("pop");
+  img.style.boxShadow = up ? "0 0 0 2px #d9b44a, 0 0 22px rgba(217,180,74,.35)" : "none";
+  const T = $("#apT"); T.textContent = name + (up ? "+" : ""); T.style.color = up ? "#e8c766" : "";
+  $("#apD").textContent = (up && canUp ? info.up : text) || "";
+  $("#apH").innerHTML = (text ? `Hold <kbd class="px-1 rounded bg-card2 border border-line">Shift</kbd> to see the upgraded version` +
+    (up && !canUp ? `<div class="mt-1">Upgrades usually raise the numbers. The exact values are on the wiki page: click the name.</div>` : "") : "") +
+    `<div class="mt-1">Click the name to open the wiki page</div>`;
+  artPrev.classList.remove("hidden", "pop"); if (!quiet) { void artPrev.offsetWidth; artPrev.classList.add("pop"); }
 }
+function setUp(v) { if (upView === v) return; upView = v; if (tipFor && !artPrev.classList.contains("hidden")) showTip(tipFor, true); }
+document.addEventListener("keydown", e => { if (e.key === "Shift") setUp(true); });
+document.addEventListener("keyup", e => { if (e.key === "Shift") setUp(false); });
+window.addEventListener("blur", () => setUp(false));
 document.addEventListener("mouseover", e => { const t = e.target.closest && e.target.closest("[data-tip]"); if (t && t !== tipFor) showTip(t); });
 document.addEventListener("mouseout", e => { const t = e.target.closest && e.target.closest("[data-tip]"); if (t && !t.contains(e.relatedTarget)) { tipFor = null; artPrev.classList.add("hidden"); } });
 document.addEventListener("mousemove", e => { if (artPrev.classList.contains("hidden")) return; const w = artPrev.offsetWidth, h = artPrev.offsetHeight; let x = e.clientX + 20, y = e.clientY + 16; if (x + w > innerWidth - 8) x = e.clientX - w - 20; if (y + h > innerHeight - 8) y = innerHeight - h - 8; artPrev.style.left = x + "px"; artPrev.style.top = Math.max(8, y) + "px"; });
