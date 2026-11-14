@@ -119,6 +119,9 @@ def call(name, args_json):
     }
     return new Promise(res => { const i = document.createElement("input"); i.type = "file"; i.webkitdirectory = true; i.multiple = true; i.onchange = async () => res(await finish([...i.files], el)); i.click(); });
   }
+  function pickLegacy(el) {   // old-style folder chooser: Chrome does not block AppData here
+    return new Promise(res => { const i = document.createElement("input"); i.type = "file"; i.webkitdirectory = true; i.multiple = true; i.onchange = async () => { dirHandle = null; res(await finish([...i.files], el)); }; i.click(); });
+  }
   async function startup() {
     const el = screen();
     $("wsMsg").textContent = "Loading the analysis engine (about 10 MB, first time only)...";
@@ -126,6 +129,10 @@ def call(name, args_json):
     const last = window.showDirectoryPicker ? await lastHandle() : null;
     $("wsRes").innerHTML = (last ? btn("wsLast", "Use the same folder as last time (" + esc(last.name) + ")", true) + `<div class="h-2"></div>` : "") + btn("wsPick", window.showDirectoryPicker ? "Choose history folder" : "Choose history folder (select it, then confirm)", !last);
     $("wsPick").onclick = () => pick(el);
+    if (window.showDirectoryPicker) {
+      $("wsRes").insertAdjacentHTML("beforeend", `<div class="mt-3 text-[12px] text-faint">Chrome says "can't open this folder because it contains system files"? Use this one instead:</div><div class="h-1.5"></div>` + btn("wsLegacy", "Choose folder (alternative method)", false));
+      $("wsLegacy").onclick = () => pickLegacy(el);
+    }
     if (last) $("wsLast").onclick = async () => {
       try { if ((await last.requestPermission({mode: "read"})) !== "granted") throw 0; dirHandle = last; folderName = last.name; await finish(await filesFromHandle(last), el); }
       catch (e) { $("wsErr").textContent = "That folder is not available any more. Choose it again."; }
@@ -150,7 +157,8 @@ def call(name, args_json):
     const fb = $("folderBtn");
     if (fb) fb.addEventListener("click", async e => {
       e.stopImmediatePropagation();
-      const el = screen(); el.querySelector("#wsRes").innerHTML = btn("wsPick2", "Choose history folder", true);
+      const el = screen(); el.querySelector("#wsRes").innerHTML = btn("wsPick2", "Choose history folder", true) + `<div class="h-2"></div>` + btn("wsLegacy2", "Choose folder (alternative method)", false);
+      el.querySelector("#wsLegacy2").onclick = async () => { if (await pickLegacy(el)) { await window.WEB_API("reload", []); if (typeof refresh === "function") refresh(); } };
       el.querySelector("#wsPick2").onclick = async () => { if (await pick(el)) { await window.WEB_API("reload", []); if (typeof refresh === "function") refresh(); } };
     }, true);
   });
