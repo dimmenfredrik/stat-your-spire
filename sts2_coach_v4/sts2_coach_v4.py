@@ -1633,14 +1633,17 @@ def dash_summary(runs, inc):
         return pct(sum(1 for r in rs if r["unused_potions"]), len(rs)) if rs else None
 
     def deck(rs):
-        return avg([r["deck_size"] for r in rs]) if rs else None
+        # measured at the start of Act 2, so every run is compared at the same point
+        # (a final deck is bigger in runs that simply lasted longer)
+        v = [r["deck_act2"] for r in rs if r.get("deck_act2")]
+        return avg(v) if v else None
 
     ok = len(wins) >= 3
     specs = [
         ("ACT 1 TURNS", a1(decided), a1(wins), (0, 0.3, 0.6, 1.0), lambda v: f"{v:.1f}t", False),
         ("DEATH GOLD", gold(losses), gold(wins), (0, 25, 60, 120), lambda v: f"{v:.0f}g", False),
         ("POTION WASTE", potions(losses), potions(wins), (0, 5, 12, 25), lambda v: f"{v:.0f}%", False),
-        ("DECK SIZE", deck(decided), deck(wins), (1, 2, 4, 6), lambda v: f"{v:.1f}", True),
+        ("DECK AT ACT 2", deck(decided), deck(wins), (1, 2, 4, 6), lambda v: f"{v:.1f}", True),
     ]
     tiles = []
     for label, v, w, cuts, fmt, absolute in specs:
@@ -1652,6 +1655,66 @@ def dash_summary(runs, inc):
             grade = _grade(abs(v - w) if absolute else v - w, cuts)
         tip = f"Your winning runs: {fmt(w)}" if (ok and w is not None) else "Needs 3+ wins to grade"
         tiles.append({"label": label, "value": fmt(v), "grade": grade, "tip": tip})
+    # What the stat does to YOUR win rate (counts only, no new scoring or thresholds)
+    def _wr(rs):
+        return pct(sum(1 for r in rs if r["win"]), len(rs))
+
+    def _split(a_rs, b_rs, a_label, b_label, a_short, b_short, title="", min_n=4):
+        if len(a_rs) < min_n or len(b_rs) < min_n:
+            return None
+        return {"title": title, "a": {"label": a_label, "short": a_short, "wr": _wr(a_rs), "n": len(a_rs)},
+                "b": {"label": b_label, "short": b_short, "wr": _wr(b_rs), "n": len(b_rs)},
+                "small": min(len(a_rs), len(b_rs)) < 10}
+
+    def a1_run(r):
+        t = [f["turns"] for f in r["floors"] if f["act"] == 1 and f["room_type"] == "monster"]
+        return avg(t) if t else None
+
+    per = [(r, a1_run(r)) for r in decided]
+    per = [(r, v) for r, v in per if v is not None]
+    if len(per) >= 8:
+        vals = sorted(v for _, v in per)
+        cut = round(vals[len(vals) // 2], 1)   # your own middle: half your runs are faster, half slower
+        tiles[0]["split"] = _split([r for r, v in per if v <= cut], [r for r, v in per if v > cut],
+                                   f"Faster fights ({cut:.1f}t or less)", f"Slower fights (over {cut:.1f}t)",
+                                   "Faster fights", "Slower fights", "Win rate by Act 1 fight length")
+    # same-point comparisons for the two loss-only tiles: every run that reached Act 2 is measured at the end of Act 1
+    reached2 = [r for r in decided if any(f["act"] >= 2 for f in r["floors"])]
+
+    def gold_a1(r):
+        fl = [f for f in r["floors"] if f["act"] == 1]
+        return fl[-1]["gold"] if fl else None
+
+    def potions_a1(r):
+        return sum(len(f["potions_used"]) for f in r["floors"] if f["act"] == 1)
+
+    g = [(r, gold_a1(r)) for r in reached2]
+    g = [(r, v) for r, v in g if v is not None]
+    if len(g) >= 8:
+        gcut = int(sorted(v for _, v in g)[len(g) // 2])
+        tiles[1]["split"] = _split([r for r, v in g if v <= gcut], [r for r, v in g if v > gcut],
+                                   f"Less gold ({gcut}g or less)", f"More gold (over {gcut}g)",
+                                   "Runs with less gold", "Runs with more gold", "Win rate by gold carried out of Act 1")
+    if len(reached2) >= 8:
+        pv = sorted(potions_a1(r) for r in reached2)
+        pcut = pv[len(pv) // 2]
+        if pv[0] < pcut < pv[-1] or pv[0] < pv[-1]:
+            lo = [r for r in reached2 if potions_a1(r) <= pcut]
+            hi = [r for r in reached2 if potions_a1(r) > pcut]
+            if not hi:   # median sits on the top value: split just below it
+                pcut -= 1
+                lo = [r for r in reached2 if potions_a1(r) <= pcut]
+                hi = [r for r in reached2 if potions_a1(r) > pcut]
+            tiles[2]["split"] = _split(lo, hi, f"Fewer potions used ({pcut} or fewer)", f"More potions used (over {pcut})",
+                                       "Runs that used fewer potions", "Runs that used more potions", "Win rate by potions used in Act 1")
+    late = [r for r in decided if r.get("deck_act2")]
+    tiles[3]["split"] = _split([r for r in late if r["deck_act2"] <= LEAN_DECK], [r for r in late if r["deck_act2"] >= BLOAT_DECK],
+                               f"Lean ({LEAN_DECK} or fewer)", f"Bloated ({BLOAT_DECK} or more)", "Lean decks", "Bloated decks", "Win rate by deck size at the start of Act 2")
+    for t in tiles:
+        if t.get("split"):
+            t.pop("note", None)
+        elif t["value"] != "-":
+            t["note"] = "Not enough runs yet to compare two groups (needs at least 4 in each)."
     return {"w": len(wins), "l": len(losses), "wr": pct(len(wins), len(decided)), "tiles": tiles}
 
 

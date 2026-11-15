@@ -199,15 +199,28 @@ function donut(p) {
   return `<svg width="148" height="148" viewBox="0 0 132 132" class="-rotate-90"><circle cx="66" cy="66" r="${R}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="11"/>
     <circle cx="66" cy="66" r="${R}" fill="none" stroke="var(--accent)" stroke-width="11" stroke-linecap="round" stroke-dasharray="${(C * v / 100).toFixed(1)} ${C.toFixed(1)}" style="transition:stroke-dasharray .6s ease"/></svg>`;
 }
+/* what the stat does to your win rate: two groups of your own runs, with how many runs are behind each */
+function splitBlock(sp) {
+  if (!sp) return "";
+  const mx = Math.max(sp.a.wr, sp.b.wr, 20) * 1.15, aBetter = sp.a.wr >= sp.b.wr;
+  const row = (r, good) => `<div class="mt-3 text-[12px] text-dim leading-tight">${esc(r.label)}</div>
+    <div class="flex items-baseline gap-1.5 mt-0.5"><span class="${good ? "text-good" : "text-bad"} font-bold num text-[15px]">${num(r.wr)}% won</span><span class="text-faint text-[11.5px] num">· ${r.n} runs</span></div>
+    <div class="h-1.5 rounded bg-white/10 mt-1.5 overflow-hidden"><i class="block h-full ${good ? "bg-good" : "bg-bad"}" style="width:${(r.wr / mx * 100).toFixed(0)}%"></i></div>`;
+  const diff = Math.abs(sp.a.wr - sp.b.wr), best = aBetter ? sp.a : sp.b;
+  const note = diff < 5 ? "No clear difference yet." : `${esc(best.short)} win <b class="text-ink">${num(diff)} points</b> more often.`;
+  return `<div class="mt-3 pt-2 border-t border-line"><div class="text-[10.5px] font-bold tracking-wider uppercase text-faint">${esc(sp.title || "")}</div>${row(sp.a, aBetter)}${row(sp.b, !aBetter)}
+    <div class="mt-2.5 text-[11.5px] text-faint leading-snug">${note}${sp.small ? ` <span class="ml-1 rounded px-1.5 py-0.5 bg-warn/15 text-warn text-[10px] font-semibold">small sample</span>` : ""}</div></div>`;
+}
 function viewDash() {
   const Sm = D.dash;
   const tiles = Sm.tiles.map(t => `<div title="${esc(t.tip)}" class="relative rounded-xl border accent-line bg-card2 p-4">
       <div class="num text-[34px] leading-none font-bold tracking-tight">${esc(t.value)}</div>
       <div class="mt-2 text-[11px] font-bold tracking-wider text-dim">${esc(t.label)}</div>
-      <div class="absolute top-3 right-3 size-8 rounded-lg grid place-items-center font-extrabold text-[#12151b] ${GRADE[t.grade || "N"]}">${t.grade || "–"}</div></div>`).join("");
+      <div class="absolute top-3 right-3 size-8 rounded-lg grid place-items-center font-extrabold text-[#12151b] ${GRADE[t.grade || "N"]}">${t.grade || "–"}</div>${t.split ? splitBlock(t.split) : (t.note ? `<div class="mt-3 pt-3 border-t border-line text-[11.5px] text-faint leading-snug">${esc(t.note)}</div>` : "")}</div>`).join("");
   const top = `<section class="rounded-2xl border border-line bg-card p-6 mb-5 flex items-center gap-8 flex-wrap">
       <div class="relative size-[148px] shrink-0">${donut(Sm.wr)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-3xl font-bold leading-none">${num(Sm.wr)}%</div><div class="num text-xs text-dim mt-1.5">${Sm.w}W · ${Sm.l}L</div></div></div></div>
-      <div class="grid grid-cols-2 xl:grid-cols-4 gap-3 flex-1 min-w-[320px]">${tiles}</div></section>`;
+      <div class="grid grid-cols-2 xl:grid-cols-4 gap-3 flex-1 min-w-[320px]">${tiles}</div>
+      <div class="w-full text-[11.5px] text-faint">The groups are your own runs, compared at the same point in the run. They show what goes together with winning, not proof of what causes it.</div></section>`;
 
   const cards = D.table.filter(x => x.delta !== null && x.np >= 3).sort((a, b) => b.np - a.np || b.delta - a.delta).slice(0, 8);
   const crow = cards.map(x => `<div class="grid grid-cols-[minmax(0,1.25fr)_30px_minmax(0,1.1fr)_46px] gap-3 items-center py-2 border-t border-line first:border-0">
