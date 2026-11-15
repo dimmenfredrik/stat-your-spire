@@ -1,34 +1,43 @@
-# STS2 Coach
+# Stat Your Spire
 
-A second-monitor coaching tool for **Slay the Spire 2**. It reads your finished `.run` history files (read-only) and shows what your losses have in common: leaks, missed card pairings, turning points, and a floor-by-floor run autopsy.
+An unofficial fan tool for **Slay the Spire 2**. It reads your finished `.run` history files (read-only) and shows what your losses have in common: which enemies keep killing you and why, which cards and relics win or lose runs, what to fix next, and a floor-by-floor run autopsy.
 
 It never writes to the game folder and never reads runs in progress. Everything stays on your PC.
 
-## Latest version: `sts2_coach_v3/`
-Local web app, Windows, Python 3 (standard library only).
+## Try it in your browser (nothing to download)
+**https://dimmenfredrik.github.io/stat-your-spire/**
 
-1. Download this repo (Code → Download ZIP) and unzip it.
-2. Open `sts2_coach_v3/` and double-click **`START_HERE.bat`** (installs Python via winget if missing).
-3. Your browser opens at http://localhost:8765. Keep the black window open; internet is needed for fonts and charts.
+Open the page in Chrome or Edge, press **Choose run files**, and pick your `.run` files from
+`%APPDATA%\SlayTheSpire2\steam\<your steam id>\profile1\saves\history` (paste that path into the address bar of the window that opens, press Ctrl+A, then Open). You can also drag the files onto the page.
+
+**Is it safe?** Nothing is uploaded. The page runs the same Python analysis inside your own browser, the files are only read, and the whole source is in this repo (branch `web` is exactly what the page serves; `tools/make_web.py` on branch `v4` builds it). You can check with your browser's network tab, or switch off your internet after the page has loaded and it still works.
+
+The browser version remembers your runs in your own browser (never uploaded), so a refresh does not ask again. Card, relic and enemy pictures and exact card numbers are optional: use the card-pictures button in the sidebar and the page builds them once, right in your browser, from your own copy of the game (the game files are only read, and nothing is uploaded). It cannot refresh by itself while you play: choose the files again after a new run.
+
+## What you get
+- **Focus:** your one job for the next run, your last run, and what to watch out for.
+- **Dashboard:** win rate and trends per character.
+- **Enemies:** who keeps killing you and what usually goes wrong against them.
+- **Cards:** which picks help or hurt.
+- **Best builds:** what wins and loses for each character, winning card pairs and recent form.
+- Second-monitor mode, co-op-only filter and a count-quits-as-losses switch.
+
+## Desktop version (finds your runs by itself and refreshes automatically)
+Local web app, Windows.
+
+1. Download the `v4` branch (Code → switch to branch `v4` → Download ZIP) and unzip it.
+2. Open `sts2_coach_v4/` and double-click **`START_HERE.bat`** (installs Python via winget if missing).
+3. Your browser opens at http://localhost:8766. Keep the black window open; internet is needed for fonts and charts.
 
 If your runs aren't found, use *Change folder* in the sidebar. The history folder is
 `C:\Users\<you>\AppData\Roaming\SlayTheSpire2\steam\<steam id>\profile1\saves\history`.
 
 ### Pictures and descriptions (built from your own game)
-Floors show small icons (fight, elite, boss, campfire, shop, event, treasure, ancient). Card, relic and enemy names link to the Slay the Spire wiki (dotted underline).
+The first time you start it, `extract_art_from_game.py` finds your installed Slay the Spire 2 through Steam, reads it (read-only) and builds card, relic, potion, event and enemy pictures plus short descriptions into `art/` (about a minute, one time; Pillow is installed automatically). The pictures are made on each player's own PC from their own copy of the game and are never uploaded: **this repo contains no game art**. If the game isn't found, the tool simply works without pictures.
 
-The first time you start the coach, `extract_art_from_game.py` finds your installed Slay the Spire 2 through Steam, reads it (read-only) and builds card, relic, potion and event pictures plus short descriptions into `sts2_coach_v3/art/` (about 30 seconds, one time; Pillow is installed automatically). Hover a name for a larger picture and its description; hold Shift while hovering a card to see its upgraded version. Card numbers, energy cost, type and rarity are read from your own game files too (sts2.dll, read-only). The pictures are made on each player's own PC from their own copy of the game and are never uploaded: this repo contains no game art. If the game isn't found, the coach simply works without pictures. To rebuild after a game update, delete `art/descriptions.json` and start again. Enemies have no still pictures in the game files, so they keep the small icons.
-
-Optional `settings.json` next to `sts2_coach_v3.py` to rename a character: `{"character_names": {"Fool": "RealName"}}`.
-
-## History
-| Stage | What it was |
-|---|---|
-| commits 1-8 | tkinter app growing from Insights + Autopsy to Habits & Fixes, Stats, sidebar |
-| final tkinter | `sts2_coach.py`, the reference original |
-| `sts2_coach_v2/` | pywebview HTML UI: Decisions, Missed Pairings, floor strip, turning points, Dashboard |
-| `sts2_coach_v3/` | pure local web app: match-history cards, grade tiles, Tailwind + Chart.js |
+## Older versions on `main`
+`sts2_coach_v3/` is the previous web version. History: `sts2_coach.py` (the tkinter original), `sts2_coach_v2/` (pywebview), `sts2_coach_v3/` (local web app), `sts2_coach_v4/` (this version, branch `v4`).
 
 This is an unofficial fan tool, not affiliated with or endorsed by Mega Crit.
 
-Use `git log` to walk through it. Personal paths and Steam ID were replaced with placeholders.
+Personal paths and Steam ID were replaced with placeholders.
