@@ -31,6 +31,8 @@ const PILL = {
   gold: "bg-warn/15 text-warn", potion: "bg-info/15 text-info", pair: "bg-violet/15 text-violet", bleed: "bg-bad/15 text-bad",
   synergy: "bg-violet/15 text-violet",
 };
+const GRADE_VAR = {S: "violet", A: "good", B: "info", C: "warn", D: "bad"};
+const gradeTint = g => GRADE_VAR[g] ? `background:color-mix(in srgb,var(--color-${GRADE_VAR[g]}) 10%,transparent);border-color:color-mix(in srgb,var(--color-${GRADE_VAR[g]}) 45%,transparent)` : "";
 const GRADE = {S: "bg-violet", A: "bg-good", B: "bg-info", C: "bg-warn", D: "bg-bad", N: "bg-card2 text-faint"};
 const pill = (k, label) => `<span class="rounded-full px-2.5 py-1 text-[10.5px] font-extrabold tracking-wide whitespace-nowrap ${PILL[k] || "bg-card2 text-dim"}">${esc(label)}</span>`;
 const SVG = (px, body, extra = "") => `<svg width="${px}" height="${px}" viewBox="0 0 16 16" aria-hidden="true" ${extra}>${body}</svg>`;
@@ -213,7 +215,7 @@ function splitBlock(sp) {
 }
 function viewDash() {
   const Sm = D.dash;
-  const tiles = Sm.tiles.map(t => `<div title="${esc(t.tip)}" class="relative rounded-xl border accent-line bg-card2 p-4">
+  const tiles = Sm.tiles.map(t => `<div title="${esc(t.tip)}" class="relative rounded-xl border accent-line bg-card2 p-4" style="${gradeTint(t.grade)}">
       <div class="num text-[34px] leading-none font-bold tracking-tight">${esc(t.value)}</div>
       <div class="mt-2 text-[11px] font-bold tracking-wider text-dim">${esc(t.label)}</div>
       <div class="absolute top-3 right-3 size-8 rounded-lg grid place-items-center font-extrabold text-[#12151b] ${GRADE[t.grade || "N"]}">${t.grade || "–"}</div>${t.split ? splitBlock(t.split) : (t.note ? `<div class="mt-3 pt-3 border-t border-line text-[11.5px] text-faint leading-snug">${esc(t.note)}</div>` : "")}</div>`).join("");
