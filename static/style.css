@@ -31,3 +31,9 @@
 .runtip { display: none; }
 .runseg:hover .runtip { display: block; }
 .runseg:hover > i { outline: 2px solid #fff; outline-offset: 1px; }
+
+/* brand block (sidebar top): the name is the logo */
+.wordmark { font-family: "Pirata One", Georgia, serif; font-size: 40px; line-height: .92; letter-spacing: .02em; }
+.wm-gold, .wm-teal { display: inline-block; -webkit-background-clip: text; background-clip: text; color: transparent; }
+.wm-gold { background-image: linear-gradient(180deg,#fff3b8 0%,#f7c443 45%,#ec8a2b 100%); filter: drop-shadow(0 1.5px 0 #4a1f12) drop-shadow(0 0 1px #4a1f12); }
+.wm-teal { background-image: linear-gradient(180deg,#c9faff 0%,#4fd0e6 45%,#1b86ad 100%); filter: drop-shadow(0 1.5px 0 #0b2a4a) drop-shadow(0 0 1px #0b2a4a); }
