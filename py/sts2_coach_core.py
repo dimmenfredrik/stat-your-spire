@@ -1186,13 +1186,13 @@ ENEMY_TRY = {
 }
 
 
-def enemies_list(runs, inc, limit=24):
+def enemies_list(runs, inc, limit=24, act=None):
     """Every boss/elite/hallway fight that cost you HP or ended a run, with the problem that usually shows up.
     Uses only what the run files record: HP lost, HP going in, fight length and unused potions."""
     stats = {}
     for r in runs:
         for i, f in enumerate(r["floors"]):
-            if not f["is_combat"] or not f["encounter"]:
+            if not f["is_combat"] or not f["encounter"] or (act is not None and f["act"] != act):
                 continue
             e = stats.setdefault(f["encounter"], {"name": f["label"], "kind": f["room_type"], "foe": "", "meets": []})
             if not e["foe"] and f.get("monster_ids"):
@@ -1246,6 +1246,110 @@ def enemies_list(runs, inc, limit=24):
                     "problems": probs, "tries": tries, "good": good})
     out.sort(key=lambda x: (x["good"], -x["deaths"], -x["pct"], -x["n"]))
     return out[:limit]
+
+
+def _plural(n, one, many=None):
+    return f"{n} {one if n == 1 else (many or one + 's')}"
+
+
+def _act1_turns(r):
+    t = [f["turns"] for f in r["floors"] if f["act"] == 1 and f["room_type"] == "monster"]
+    return avg(t) if t else None
+
+
+def prerun_picks(runs, inc):
+    """Opening picks (the first-floor choice) for one character: how each went and, in plain sentences,
+    what tends to go wrong and what you do well. Counts only, no new scoring."""
+    by, offered = {}, Counter()
+    decided_all = [r for r in runs if r["win"] or is_loss(r, inc)]
+    for r in runs:
+        opts = (r["floors"][0].get("ancient") or []) if r["floors"] else []
+        for name, chosen in opts:
+            offered[name] += 1
+            if chosen and (r["win"] or is_loss(r, inc)):
+                by.setdefault(name, []).append(r)
+    base_turns = [t for t in (_act1_turns(r) for r in decided_all) if t is not None]
+    base_t = avg(base_turns) if base_turns else None
+    out = []
+    for name, rs in by.items():
+        n, wins = len(rs), [r for r in rs if r["win"]]
+        losses = [r for r in rs if not r["win"]]
+        bad, good = [], []
+        if n < 3:
+            bad.append(f"Only {_plural(n, 'run')} with this pick so far, too few to say what goes wrong.")
+            good.append("Play it a couple more times and this will fill in.")
+        else:
+            if losses:
+                acts = Counter(r["final_act"] for r in losses)
+                a, k = acts.most_common(1)[0]
+                if k * 2 >= len(losses) and len(losses) >= 2:
+                    bad.append(f"{k} of your {len(losses)} losses ended in Act {a}.")
+                killers = Counter((r["killer"] or "") for r in losses if r.get("killer"))
+                if killers:
+                    kn, kk = killers.most_common(1)[0]
+                    kn = re.sub(r"\s*\((elite|weak|boss)\)\s*$", "", kn, flags=re.I)
+                    if kk >= 2:
+                        bad.append(f"{kn} ended {kk} of these runs.")
+                low = []
+                for r in losses:
+                    fl = r["floors"]
+                    if len(fl) > 1 and fl[-2].get("hp") is not None and fl[-2].get("max_hp"):
+                        low.append(fl[-2]["hp"] / fl[-2]["max_hp"] < ENEMY_LOW_ENTRY)
+                if low and sum(low) * 2 >= len(low) and sum(low) >= 2:
+                    bad.append(f"In {sum(low)} of {len(low)} losses you walked into the last fight below {round(ENEMY_LOW_ENTRY * 100)}% HP.")
+                pot = [r for r in losses if r["unused_potions"]]
+                if len(pot) * 2 >= len(losses) and len(pot) >= 2:
+                    bad.append(f"You died with potions unused in {len(pot)} of {len(losses)} losses.")
+            d2 = [r["deck_act2"] for r in rs if r.get("deck_act2")]
+            if len(d2) >= 3:
+                da = avg(d2)
+                if da >= BLOAT_DECK:
+                    bad.append(f"Your deck grew big, {da:.0f} cards at the start of Act 2.")
+                elif da <= LEAN_DECK:
+                    good.append(f"You kept the deck lean, {da:.0f} cards at the start of Act 2.")
+            tt = [t for t in (_act1_turns(r) for r in rs) if t is not None]
+            if base_t is not None and len(tt) >= 3:
+                ta = avg(tt)
+                if round(ta, 1) > round(base_t, 1):
+                    bad.append(f"Act 1 fights ran slower than your usual: {ta:.1f} turns against {base_t:.1f}.")
+                elif round(ta, 1) < round(base_t, 1):
+                    good.append(f"Act 1 fights were quicker than your usual: {ta:.1f} turns against {base_t:.1f}.")
+            deep = [r for r in rs if r["final_act"] >= 3 or r["win"]]
+            if deep:
+                good.append(f"{len(deep)} of {n} runs made it to Act 3.")
+            if wins:
+                good.append(f"You won {len(wins)} of {n}.")
+            if not bad:
+                bad.append("Nothing stands out as a problem yet.")
+            if not good:
+                good.append("Nothing stands out as a strength yet.")
+        out.append({"name": name, "n": n, "wins": len(wins), "wr": pct(len(wins), n), "offered": offered[name],
+                    "bad": bad, "good": good, "small": n < 10})
+    out.sort(key=lambda x: (-x["n"], -x["wr"]))
+    return out
+
+
+def prerun_wins(runs, inc):
+    """A few plain facts about the character's winning runs, for comparison."""
+    w = [r for r in runs if r["win"]]
+    if len(w) < 3:
+        return []
+    out = []
+    d2 = [r["deck_act2"] for r in w if r.get("deck_act2")]
+    if d2:
+        out.append({"label": "Cards at the start of Act 2", "value": f"{avg(d2):.0f}"})
+    tt = [t for t in (_act1_turns(r) for r in w) if t is not None]
+    if tt:
+        out.append({"label": "Turns per Act 1 fight", "value": f"{avg(tt):.1f}"})
+    out.append({"label": "Wins that ended with unused potions", "value": f"{sum(1 for r in w if r['unused_potions'])} of {len(w)}"})
+    return out
+
+
+def prerun(runs, inc):
+    fights = {}
+    for a in (1, 2, 3):
+        fights[a] = [e for e in enemies_list(runs, inc, 40, act=a) if not e["good"]][:5]
+    return {"picks": prerun_picks(runs, inc), "fights": fights, "wins": prerun_wins(runs, inc)}
 
 
 def _end_foe(r):
@@ -1958,6 +2062,7 @@ class CoachAPI:
         out["habits"] = self._habits(runs, inc, character, asc, rng)
         out["danger"] = danger_list(runs, inc)
         out["enemies"] = enemies_list(runs, inc)
+        out["prerun"] = prerun(runs, inc) if character != ALL else None
         out["builds"] = best_builds(scope(all_runs), inc)
 
         # --- stats ---

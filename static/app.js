@@ -184,14 +184,14 @@ function renderBanner() {
   ba.innerHTML = "";
 }
 function renderTabs() {
-  const tabs = [["focus", "Focus"], ["dash", "Dashboard"], ["enemies", "Enemies"], ["cards", "Cards"], ["builds", "Best builds"]];
+  const tabs = [["focus", "Focus"], ["prep", "Before you start"], ["dash", "Dashboard"], ["enemies", "Enemies"], ["cards", "Cards"], ["builds", "Best builds"]];
   $("#tabs").innerHTML = tabs.map(([k, l]) => `<button data-tab="${k}" class="relative py-3 text-[15px] font-semibold transition ${S.tab === k ? "text-ink" : "text-dim hover:text-ink"}">${l}
     ${S.tab === k ? `<span class="absolute inset-x-0 -bottom-px h-[3px] rounded-t bg-[var(--accent)]"></span>` : ""}</button>`).join("");
 }
 function renderView() {
   Object.values(charts).forEach(c => c.destroy()); charts = {};
   const v = $("#view");
-  v.innerHTML = `<div class="fade">${S.tab === "focus" ? viewFocus() : S.tab === "dash" ? viewDash() : S.tab === "enemies" ? viewEnemies() : S.tab === "builds" ? viewBuilds() : viewCards()}</div>`;
+  v.innerHTML = `<div class="fade">${S.tab === "focus" ? viewFocus() : S.tab === "prep" ? viewPrep() : S.tab === "dash" ? viewDash() : S.tab === "enemies" ? viewEnemies() : S.tab === "builds" ? viewBuilds() : viewCards()}</div>`;
   renderSecond();
   if (S.tab === "dash") for (const f of S.open) openRunBody(f, true);
 }
@@ -431,11 +431,12 @@ function toast(msg) {
   setTimeout(() => { el.style.transition = "opacity .4s"; el.style.opacity = 0; setTimeout(() => el.remove(), 400); }, 6000);
 }
 document.addEventListener("click", e => {
-  const t = e.target.closest("[data-char],[data-range],[data-tab],[data-feed],[data-more],[data-sort],[data-goto],[data-hab]");
+  const t = e.target.closest("[data-char],[data-range],[data-tab],[data-prepact],[data-feed],[data-more],[data-sort],[data-goto],[data-hab]");
   if (!t) return;
   if (t.dataset.hab !== undefined) { const k = t.dataset.hab, art = t.closest("article"); if (S.expandedHabits.has(k)) S.expandedHabits.delete(k); else S.expandedHabits.add(k); art && art.classList.toggle("open", S.expandedHabits.has(k)); return; }
   if (t.dataset.char !== undefined) { S.character = t.dataset.char; refresh(); }
   else if (t.dataset.range) { S.range = t.dataset.range; refresh(); }
+  else if (t.dataset.prepact) { S.prepAct = +t.dataset.prepact; renderView(); }
   else if (t.dataset.tab) { S.tab = t.dataset.tab; renderTabs(); renderView(); }
   else if (t.dataset.feed) toggleRun(t.dataset.feed);
   else if (t.dataset.more) { S.feedN += 12; renderView(); }
